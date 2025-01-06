@@ -71,13 +71,12 @@ Add the relevant navigation menu items in `netbox/netbox/navigation/menu.py`.
 Create the following for each model:
 
 * Detailed (full) model serializer in `api/serializers.py`
-* Nested serializer in `api/nested_serializers.py`
 * API view in `api/views.py`
 * Endpoint route in `api/urls.py`
 
 ## 13. GraphQL API components
 
-Create a Graphene object type for the model in `graphql/types.py` by subclassing the appropriate class from `netbox.graphql.types`.
+Create a GraphQL object type for the model in `graphql/types.py` by subclassing the appropriate class from `netbox.graphql.types`.
 
 Also extend the schema class defined in `graphql/schema.py` with the individual object and object list fields per the established convention.
 

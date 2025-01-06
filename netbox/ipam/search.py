@@ -1,5 +1,5 @@
-from . import models
 from netbox.search import SearchIndex, register_search
+from . import models
 
 
 @register_search
@@ -11,6 +11,7 @@ class AggregateIndex(SearchIndex):
         ('date_added', 2000),
         ('comments', 5000),
     )
+    display_attrs = ('rir', 'tenant', 'description')
 
 
 @register_search
@@ -18,16 +19,20 @@ class ASNIndex(SearchIndex):
     model = models.ASN
     fields = (
         ('asn', 100),
+        ('prefixed_name', 110),
         ('description', 500),
     )
+    display_attrs = ('rir', 'tenant', 'description')
 
 
 @register_search
 class ASNRangeIndex(SearchIndex):
     model = models.ASNRange
     fields = (
+        ('name', 100),
         ('description', 500),
     )
+    display_attrs = ('rir', 'tenant', 'description')
 
 
 @register_search
@@ -39,6 +44,7 @@ class FHRPGroupIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('protocol', 'auth_type', 'description')
 
 
 @register_search
@@ -50,6 +56,7 @@ class IPAddressIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('vrf', 'tenant', 'status', 'role', 'description')
 
 
 @register_search
@@ -61,17 +68,7 @@ class IPRangeIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
-
-
-@register_search
-class L2VPNIndex(SearchIndex):
-    model = models.L2VPN
-    fields = (
-        ('name', 100),
-        ('slug', 110),
-        ('description', 500),
-        ('comments', 5000),
-    )
+    display_attrs = ('vrf', 'tenant', 'status', 'role', 'description')
 
 
 @register_search
@@ -82,6 +79,7 @@ class PrefixIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('site', 'vrf', 'tenant', 'vlan', 'status', 'role', 'description')
 
 
 @register_search
@@ -92,6 +90,7 @@ class RIRIndex(SearchIndex):
         ('slug', 110),
         ('description', 500),
     )
+    display_attrs = ('description',)
 
 
 @register_search
@@ -102,6 +101,7 @@ class RoleIndex(SearchIndex):
         ('slug', 110),
         ('description', 500),
     )
+    display_attrs = ('description',)
 
 
 @register_search
@@ -112,6 +112,7 @@ class RouteTargetIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('tenant', 'description')
 
 
 @register_search
@@ -122,6 +123,7 @@ class ServiceIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('device', 'virtual_machine', 'description')
 
 
 @register_search
@@ -132,6 +134,7 @@ class ServiceTemplateIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('description',)
 
 
 @register_search
@@ -143,6 +146,7 @@ class VLANIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('site', 'group', 'tenant', 'status', 'role', 'description')
 
 
 @register_search
@@ -152,8 +156,8 @@ class VLANGroupIndex(SearchIndex):
         ('name', 100),
         ('slug', 110),
         ('description', 500),
-        ('max_vid', 2000),
     )
+    display_attrs = ('scope_type', 'description')
 
 
 @register_search
@@ -165,3 +169,4 @@ class VRFIndex(SearchIndex):
         ('description', 500),
         ('comments', 5000),
     )
+    display_attrs = ('rd', 'tenant', 'description')

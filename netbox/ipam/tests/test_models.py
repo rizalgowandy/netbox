@@ -1,10 +1,10 @@
-from netaddr import IPNetwork, IPSet
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
+from netaddr import IPNetwork, IPSet
+from utilities.data import string_to_ranges
 
-from dcim.models import Interface, Device, DeviceRole, DeviceType, Manufacturer, Site
-from ipam.choices import IPAddressRoleChoices, PrefixStatusChoices
-from ipam.models import Aggregate, IPAddress, IPRange, Prefix, RIR, VLAN, VLANGroup, VRF, L2VPN, L2VPNTermination
+from ipam.choices import *
+from ipam.models import *
 
 
 class TestAggregate(TestCase):
@@ -34,6 +34,35 @@ class TestAggregate(TestCase):
             Prefix(prefix=IPNetwork('10.128.0.0/9')),
         ))
         self.assertEqual(aggregate.get_utilization(), 100)
+
+
+class TestIPRange(TestCase):
+
+    def test_overlapping_range(self):
+        iprange_192_168 = IPRange.objects.create(start_address=IPNetwork('192.168.0.1/22'), end_address=IPNetwork('192.168.0.49/22'))
+        iprange_192_168.clean()
+        iprange_3_1_99 = IPRange.objects.create(start_address=IPNetwork('1.2.3.1/24'), end_address=IPNetwork('1.2.3.99/24'))
+        iprange_3_1_99.clean()
+        iprange_3_100_199 = IPRange.objects.create(start_address=IPNetwork('1.2.3.100/24'), end_address=IPNetwork('1.2.3.199/24'))
+        iprange_3_100_199.clean()
+        iprange_3_200_255 = IPRange.objects.create(start_address=IPNetwork('1.2.3.200/24'), end_address=IPNetwork('1.2.3.255/24'))
+        iprange_3_200_255.clean()
+        iprange_4_1_99 = IPRange.objects.create(start_address=IPNetwork('1.2.4.1/24'), end_address=IPNetwork('1.2.4.99/24'))
+        iprange_4_1_99.clean()
+        iprange_4_200 = IPRange.objects.create(start_address=IPNetwork('1.2.4.200/24'), end_address=IPNetwork('1.2.4.255/24'))
+        iprange_4_200.clean()
+        # Overlapping range entirely within existing
+        with self.assertRaises(ValidationError):
+            iprange_3_123_124 = IPRange.objects.create(start_address=IPNetwork('1.2.3.123/26'), end_address=IPNetwork('1.2.3.124/26'))
+            iprange_3_123_124.clean()
+        # Overlapping range starting within existing
+        with self.assertRaises(ValidationError):
+            iprange_4_98_101 = IPRange.objects.create(start_address=IPNetwork('1.2.4.98/24'), end_address=IPNetwork('1.2.4.101/24'))
+            iprange_4_98_101.clean()
+        # Overlapping range ending within existing
+        with self.assertRaises(ValidationError):
+            iprange_4_198_201 = IPRange.objects.create(start_address=IPNetwork('1.2.4.198/24'), end_address=IPNetwork('1.2.4.201/24'))
+            iprange_4_198_201.clean()
 
 
 class TestPrefix(TestCase):
@@ -233,7 +262,6 @@ class TestPrefix(TestCase):
         duplicate_prefix = Prefix(prefix=IPNetwork('192.0.2.0/24'))
         self.assertIsNone(duplicate_prefix.clean())
 
-    @override_settings(ENFORCE_GLOBAL_UNIQUE=True)
     def test_duplicate_global_unique(self):
         Prefix.objects.create(prefix=IPNetwork('192.0.2.0/24'))
         duplicate_prefix = Prefix(prefix=IPNetwork('192.0.2.0/24'))
@@ -472,7 +500,6 @@ class TestIPAddress(TestCase):
         duplicate_ip = IPAddress(address=IPNetwork('192.0.2.1/24'))
         self.assertIsNone(duplicate_ip.clean())
 
-    @override_settings(ENFORCE_GLOBAL_UNIQUE=True)
     def test_duplicate_global_unique(self):
         IPAddress.objects.create(address=IPNetwork('192.0.2.1/24'))
         duplicate_ip = IPAddress(address=IPNetwork('192.0.2.1/24'))
@@ -490,19 +517,16 @@ class TestIPAddress(TestCase):
         duplicate_ip = IPAddress(vrf=vrf, address=IPNetwork('192.0.2.1/24'))
         self.assertRaises(ValidationError, duplicate_ip.clean)
 
-    @override_settings(ENFORCE_GLOBAL_UNIQUE=True)
     def test_duplicate_nonunique_nonrole_role(self):
         IPAddress.objects.create(address=IPNetwork('192.0.2.1/24'))
         duplicate_ip = IPAddress(address=IPNetwork('192.0.2.1/24'), role=IPAddressRoleChoices.ROLE_VIP)
         self.assertRaises(ValidationError, duplicate_ip.clean)
 
-    @override_settings(ENFORCE_GLOBAL_UNIQUE=True)
     def test_duplicate_nonunique_role_nonrole(self):
         IPAddress.objects.create(address=IPNetwork('192.0.2.1/24'), role=IPAddressRoleChoices.ROLE_VIP)
         duplicate_ip = IPAddress(address=IPNetwork('192.0.2.1/24'))
         self.assertRaises(ValidationError, duplicate_ip.clean)
 
-    @override_settings(ENFORCE_GLOBAL_UNIQUE=True)
     def test_duplicate_nonunique_role(self):
         IPAddress.objects.create(address=IPNetwork('192.0.2.1/24'), role=IPAddressRoleChoices.ROLE_VIP)
         IPAddress.objects.create(address=IPNetwork('192.0.2.1/24'), role=IPAddressRoleChoices.ROLE_VIP)
@@ -515,8 +539,7 @@ class TestVLANGroup(TestCase):
         vlangroup = VLANGroup.objects.create(
             name='VLAN Group 1',
             slug='vlan-group-1',
-            min_vid=100,
-            max_vid=199
+            vid_ranges=string_to_ranges('100-199'),
         )
         VLAN.objects.bulk_create((
             VLAN(name='VLAN 100', vid=100, group=vlangroup),
@@ -540,75 +563,26 @@ class TestVLANGroup(TestCase):
         VLAN.objects.create(name='VLAN 104', vid=104, group=vlangroup)
         self.assertEqual(vlangroup.get_next_available_vid(), 105)
 
+    def test_vid_validation(self):
+        vlangroup = VLANGroup.objects.first()
 
-class TestL2VPNTermination(TestCase):
+        vlan = VLAN(vid=1, name='VLAN 1', group=vlangroup)
+        with self.assertRaises(ValidationError):
+            vlan.full_clean()
 
-    @classmethod
-    def setUpTestData(cls):
+        vlan = VLAN(vid=109, name='VLAN 109', group=vlangroup)
+        vlan.full_clean()
 
-        site = Site.objects.create(name='Site 1')
-        manufacturer = Manufacturer.objects.create(name='Manufacturer 1')
-        device_type = DeviceType.objects.create(model='Device Type 1', manufacturer=manufacturer)
-        role = DeviceRole.objects.create(name='Switch')
-        device = Device.objects.create(
-            name='Device 1',
-            site=site,
-            device_type=device_type,
-            role=role,
-            status='active'
+    def test_overlapping_vlan(self):
+        vlangroup = VLANGroup(
+            name='VLAN Group 1',
+            slug='vlan-group-1',
+            vid_ranges=string_to_ranges('2-4,3-5'),
         )
+        with self.assertRaises(ValidationError):
+            vlangroup.full_clean()
 
-        interfaces = (
-            Interface(name='Interface 1', device=device, type='1000baset'),
-            Interface(name='Interface 2', device=device, type='1000baset'),
-            Interface(name='Interface 3', device=device, type='1000baset'),
-            Interface(name='Interface 4', device=device, type='1000baset'),
-            Interface(name='Interface 5', device=device, type='1000baset'),
-        )
-
-        Interface.objects.bulk_create(interfaces)
-
-        vlans = (
-            VLAN(name='VLAN 1', vid=651),
-            VLAN(name='VLAN 2', vid=652),
-            VLAN(name='VLAN 3', vid=653),
-            VLAN(name='VLAN 4', vid=654),
-            VLAN(name='VLAN 5', vid=655),
-            VLAN(name='VLAN 6', vid=656),
-            VLAN(name='VLAN 7', vid=657)
-        )
-
-        VLAN.objects.bulk_create(vlans)
-
-        l2vpns = (
-            L2VPN(name='L2VPN 1', slug='l2vpn-1', type='vxlan', identifier=650001),
-            L2VPN(name='L2VPN 2', slug='l2vpn-2', type='vpws', identifier=650002),
-            L2VPN(name='L2VPN 3', slug='l2vpn-3', type='vpls'),  # No RD
-        )
-        L2VPN.objects.bulk_create(l2vpns)
-
-        l2vpnterminations = (
-            L2VPNTermination(l2vpn=l2vpns[0], assigned_object=vlans[0]),
-            L2VPNTermination(l2vpn=l2vpns[0], assigned_object=vlans[1]),
-            L2VPNTermination(l2vpn=l2vpns[0], assigned_object=vlans[2])
-        )
-
-        L2VPNTermination.objects.bulk_create(l2vpnterminations)
-
-    def test_duplicate_interface_terminations(self):
-        device = Device.objects.first()
-        interface = Interface.objects.filter(device=device).first()
-        l2vpn = L2VPN.objects.first()
-
-        L2VPNTermination.objects.create(l2vpn=l2vpn, assigned_object=interface)
-        duplicate = L2VPNTermination(l2vpn=l2vpn, assigned_object=interface)
-
-        self.assertRaises(ValidationError, duplicate.clean)
-
-    def test_duplicate_vlan_terminations(self):
-        vlan = Interface.objects.first()
-        l2vpn = L2VPN.objects.first()
-
-        L2VPNTermination.objects.create(l2vpn=l2vpn, assigned_object=vlan)
-        duplicate = L2VPNTermination(l2vpn=l2vpn, assigned_object=vlan)
-        self.assertRaises(ValidationError, duplicate.clean)
+        # make sure single vlan range works
+        vlangroup.vid_ranges = string_to_ranges('2-2')
+        vlangroup.full_clean()
+        vlangroup.save()

@@ -14,6 +14,7 @@ __all__ = (
     'ClusterImportForm',
     'ClusterGroupImportForm',
     'ClusterTypeImportForm',
+    'VirtualDiskImportForm',
     'VirtualMachineImportForm',
     'VMInterfaceImportForm',
 )
@@ -136,7 +137,7 @@ class VirtualMachineImportForm(NetBoxModelImportForm):
         model = VirtualMachine
         fields = (
             'name', 'status', 'role', 'site', 'cluster', 'device', 'tenant', 'platform', 'vcpus', 'memory', 'disk',
-            'description', 'config_template', 'comments', 'tags',
+            'description', 'serial', 'config_template', 'comments', 'tags',
         )
 
 
@@ -199,3 +200,17 @@ class VMInterfaceImportForm(NetBoxModelImportForm):
             return True
         else:
             return self.cleaned_data['enabled']
+
+
+class VirtualDiskImportForm(NetBoxModelImportForm):
+    virtual_machine = CSVModelChoiceField(
+        label=_('Virtual machine'),
+        queryset=VirtualMachine.objects.all(),
+        to_field_name='name'
+    )
+
+    class Meta:
+        model = VirtualDisk
+        fields = (
+            'virtual_machine', 'name', 'size', 'description', 'tags'
+        )

@@ -53,6 +53,24 @@ urlpatterns = [
     path('bookmarks/delete/', views.BookmarkBulkDeleteView.as_view(), name='bookmark_bulk_delete'),
     path('bookmarks/<int:pk>/', include(get_model_urls('extras', 'bookmark'))),
 
+    # Notification groups
+    path('notification-groups/', views.NotificationGroupListView.as_view(), name='notificationgroup_list'),
+    path('notification-groups/add/', views.NotificationGroupEditView.as_view(), name='notificationgroup_add'),
+    path('notification-groups/import/', views.NotificationGroupBulkImportView.as_view(), name='notificationgroup_import'),
+    path('notification-groups/edit/', views.NotificationGroupBulkEditView.as_view(), name='notificationgroup_bulk_edit'),
+    path('notification-groups/delete/', views.NotificationGroupBulkDeleteView.as_view(), name='notificationgroup_bulk_delete'),
+    path('notification-groups/<int:pk>/', include(get_model_urls('extras', 'notificationgroup'))),
+
+    # Notifications
+    path('notifications/', views.NotificationsView.as_view(), name='notifications'),
+    path('notifications/delete/', views.NotificationBulkDeleteView.as_view(), name='notification_bulk_delete'),
+    path('notifications/<int:pk>/', include(get_model_urls('extras', 'notification'))),
+
+    # Subscriptions
+    path('subscriptions/add/', views.SubscriptionCreateView.as_view(), name='subscription_add'),
+    path('subscriptions/delete/', views.SubscriptionBulkDeleteView.as_view(), name='subscription_bulk_delete'),
+    path('subscriptions/<int:pk>/', include(get_model_urls('extras', 'subscription'))),
+
     # Webhooks
     path('webhooks/', views.WebhookListView.as_view(), name='webhook_list'),
     path('webhooks/add/', views.WebhookEditView.as_view(), name='webhook_add'),
@@ -60,6 +78,14 @@ urlpatterns = [
     path('webhooks/edit/', views.WebhookBulkEditView.as_view(), name='webhook_bulk_edit'),
     path('webhooks/delete/', views.WebhookBulkDeleteView.as_view(), name='webhook_bulk_delete'),
     path('webhooks/<int:pk>/', include(get_model_urls('extras', 'webhook'))),
+
+    # Event rules
+    path('event-rules/', views.EventRuleListView.as_view(), name='eventrule_list'),
+    path('event-rules/add/', views.EventRuleEditView.as_view(), name='eventrule_add'),
+    path('event-rules/import/', views.EventRuleBulkImportView.as_view(), name='eventrule_import'),
+    path('event-rules/edit/', views.EventRuleBulkEditView.as_view(), name='eventrule_bulk_edit'),
+    path('event-rules/delete/', views.EventRuleBulkDeleteView.as_view(), name='eventrule_bulk_delete'),
+    path('event-rules/<int:pk>/', include(get_model_urls('extras', 'eventrule'))),
 
     # Tags
     path('tags/', views.TagListView.as_view(), name='tag_list'),
@@ -98,40 +124,20 @@ urlpatterns = [
     path('journal-entries/import/', views.JournalEntryBulkImportView.as_view(), name='journalentry_import'),
     path('journal-entries/<int:pk>/', include(get_model_urls('extras', 'journalentry'))),
 
-    # Config revisions
-    path('config-revisions/', views.ConfigRevisionListView.as_view(), name='configrevision_list'),
-    path('config-revisions/add/', views.ConfigRevisionEditView.as_view(), name='configrevision_add'),
-    path('config-revisions/delete/', views.ConfigRevisionBulkDeleteView.as_view(), name='configrevision_bulk_delete'),
-    path('config-revisions/<int:pk>/restore/', views.ConfigRevisionRestoreView.as_view(), name='configrevision_restore'),
-    path('config-revisions/<int:pk>/', include(get_model_urls('extras', 'configrevision'))),
-
-    # Change logging
-    path('changelog/', views.ObjectChangeListView.as_view(), name='objectchange_list'),
-    path('changelog/<int:pk>/', include(get_model_urls('extras', 'objectchange'))),
-
     # User dashboard
     path('dashboard/reset/', views.DashboardResetView.as_view(), name='dashboard_reset'),
     path('dashboard/widgets/add/', views.DashboardWidgetAddView.as_view(), name='dashboardwidget_add'),
     path('dashboard/widgets/<uuid:id>/configure/', views.DashboardWidgetConfigView.as_view(), name='dashboardwidget_config'),
     path('dashboard/widgets/<uuid:id>/delete/', views.DashboardWidgetDeleteView.as_view(), name='dashboardwidget_delete'),
 
-    # Reports
-    path('reports/', views.ReportListView.as_view(), name='report_list'),
-    path('reports/add/', views.ReportModuleCreateView.as_view(), name='reportmodule_add'),
-    path('reports/results/<int:job_pk>/', views.ReportResultView.as_view(), name='report_result'),
-    path('reports/<int:pk>/', include(get_model_urls('extras', 'reportmodule'))),
-    path('reports/<str:module>/<str:name>/', views.ReportView.as_view(), name='report'),
-    path('reports/<str:module>/<str:name>/source/', views.ReportSourceView.as_view(), name='report_source'),
-    path('reports/<str:module>/<str:name>/jobs/', views.ReportJobsView.as_view(), name='report_jobs'),
-
     # Scripts
     path('scripts/', views.ScriptListView.as_view(), name='script_list'),
     path('scripts/add/', views.ScriptModuleCreateView.as_view(), name='scriptmodule_add'),
     path('scripts/results/<int:job_pk>/', views.ScriptResultView.as_view(), name='script_result'),
-    path('scripts/<int:pk>/', include(get_model_urls('extras', 'scriptmodule'))),
-    path('scripts/<str:module>/<str:name>/', views.ScriptView.as_view(), name='script'),
-    path('scripts/<str:module>/<str:name>/source/', views.ScriptSourceView.as_view(), name='script_source'),
-    path('scripts/<str:module>/<str:name>/jobs/', views.ScriptJobsView.as_view(), name='script_jobs'),
+    path('scripts/<int:pk>/', views.ScriptView.as_view(), name='script'),
+    path('scripts/<int:pk>/source/', views.ScriptSourceView.as_view(), name='script_source'),
+    path('scripts/<int:pk>/jobs/', views.ScriptJobsView.as_view(), name='script_jobs'),
+    path('script-modules/<int:pk>/', include(get_model_urls('extras', 'scriptmodule'))),
 
     # Markdown
     path('render/markdown/', views.RenderMarkdownView.as_view(), name="render_markdown"),

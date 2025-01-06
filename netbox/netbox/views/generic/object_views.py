@@ -1,22 +1,26 @@
 import logging
+from collections import defaultdict
 from copy import deepcopy
 
 from django.contrib import messages
-from django.db import transaction
-from django.db.models import ProtectedError
+from django.db import router, transaction
+from django.db.models import ProtectedError, RestrictedError
+from django.db.models.deletion import Collector
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
+from django.utils.translation import gettext as _
 
-from extras.signals import clear_webhooks
+from core.signals import clear_events
 from utilities.error_handlers import handle_protectederror
 from utilities.exceptions import AbortRequest, PermissionsViolation
 from utilities.forms import ConfirmationForm, restrict_form_fields
-from utilities.htmx import is_htmx
+from utilities.htmx import htmx_partial
 from utilities.permissions import get_permission_for_model
-from utilities.utils import get_viewname, normalize_querydict, prepare_cloned_fields
-from utilities.views import GetReturnURLMixin
+from utilities.querydict import normalize_querydict, prepare_cloned_fields
+from utilities.views import GetReturnURLMixin, get_viewname
 from .base import BaseObjectView
 from .mixins import ActionsMixin, TableMixin
 from .utils import get_prerequisite_model
@@ -83,13 +87,15 @@ class ObjectChildrenView(ObjectView, ActionsMixin, TableMixin):
         child_model: The model class which represents the child objects
         table: The django-tables2 Table class used to render the child objects list
         filterset: A django-filter FilterSet that is applied to the queryset
-        actions: Supported actions for the model. When adding custom actions, bulk action names must
-            be prefixed with `bulk_`. Default actions: add, import, export, bulk_edit, bulk_delete
-        action_perms: A dictionary mapping supported actions to a set of permissions required for each
+        filterset_form: The form class used to render filter options
+        actions: A mapping of supported actions to their required permissions. When adding custom actions, bulk
+            action names must be prefixed with `bulk_`. (See ActionsMixin.)
     """
     child_model = None
     table = None
     filterset = None
+    filterset_form = None
+    template_name = 'generic/object_children.html'
 
     def get_children(self, request, parent):
         """
@@ -99,7 +105,9 @@ class ObjectChildrenView(ObjectView, ActionsMixin, TableMixin):
             request: The current request
             parent: The parent object
         """
-        raise NotImplementedError(f'{self.__class__.__name__} must implement get_children()')
+        raise NotImplementedError(_('{class_name} must implement get_children()').format(
+            class_name=self.__class__.__name__
+        ))
 
     def prep_table_data(self, request, queryset, parent):
         """
@@ -134,18 +142,21 @@ class ObjectChildrenView(ObjectView, ActionsMixin, TableMixin):
         table = self.get_table(table_data, request, has_bulk_actions)
 
         # If this is an HTMX request, return only the rendered table HTML
-        if is_htmx(request):
+        if htmx_partial(request):
             return render(request, 'htmx/table.html', {
                 'object': instance,
                 'table': table,
+                'model': self.child_model,
             })
 
         return render(request, self.get_template_name(), {
             'object': instance,
+            'model': self.child_model,
             'child_model': self.child_model,
             'base_template': f'{instance._meta.app_label}/{instance._meta.model_name}.html',
             'table': table,
             'table_config': f'{table.name}_config',
+            'filter_form': self.filterset_form(request.GET) if self.filterset_form else None,
             'actions': actions,
             'tab': self.tab,
             'return_url': request.get_full_path(),
@@ -162,6 +173,7 @@ class ObjectEditView(GetReturnURLMixin, BaseObjectView):
     """
     template_name = 'generic/object_edit.html'
     form = None
+    htmx_template_name = 'htmx/form.html'
 
     def dispatch(self, request, *args, **kwargs):
         # Determine required permission based on whether we are editing an existing object
@@ -222,8 +234,10 @@ class ObjectEditView(GetReturnURLMixin, BaseObjectView):
         restrict_form_fields(form, request.user)
 
         # If this is an HTMX request, return only the rendered form HTML
-        if is_htmx(request):
-            return render(request, 'htmx/form.html', {
+        if htmx_partial(request):
+            return render(request, self.htmx_template_name, {
+                'model': model,
+                'object': obj,
                 'form': form,
             })
 
@@ -278,6 +292,7 @@ class ObjectEditView(GetReturnURLMixin, BaseObjectView):
                     msg = f'{msg} {obj}'
                 messages.success(request, msg)
 
+                # If adding another object, redirect back to the edit form
                 if '_addanother' in request.POST:
                     redirect_url = request.path
 
@@ -293,12 +308,18 @@ class ObjectEditView(GetReturnURLMixin, BaseObjectView):
 
                 return_url = self.get_return_url(request, obj)
 
+                # If the object has been created or edited via HTMX, return an HTMX redirect to the object view
+                if request.htmx:
+                    return HttpResponse(headers={
+                        'HX-Location': return_url,
+                    })
+
                 return redirect(return_url)
 
             except (AbortRequest, PermissionsViolation) as e:
                 logger.debug(e.message)
                 form.add_error(None, e.message)
-                clear_webhooks.send(sender=self)
+                clear_events.send(sender=self)
 
         else:
             logger.debug("Form validation failed")
@@ -320,6 +341,44 @@ class ObjectDeleteView(GetReturnURLMixin, BaseObjectView):
     def get_required_permission(self):
         return get_permission_for_model(self.queryset.model, 'delete')
 
+    def _get_dependent_objects(self, obj):
+        """
+        Returns a dictionary mapping of dependent objects (organized by model) which will be deleted as a result of
+        deleting the requested object.
+
+        Args:
+            obj: The object to return dependent objects for
+        """
+        using = router.db_for_write(obj._meta.model)
+        collector = Collector(using=using)
+        collector.collect([obj])
+
+        # Compile a mapping of models to instances
+        dependent_objects = defaultdict(list)
+        for model, instances in collector.instances_with_model():
+            # Ignore relations to auto-created models (e.g. many-to-many mappings)
+            if model._meta.auto_created:
+                continue
+            # Omit the root object
+            if instances == obj:
+                continue
+            dependent_objects[model].append(instances)
+
+        return dict(dependent_objects)
+
+    def _handle_protected_objects(self, obj, protected_objects, request, exc):
+        """
+        Handle a ProtectedError or RestrictedError exception raised while attempt to resolve dependent objects.
+        """
+        handle_protectederror(protected_objects, request, exc)
+
+        if request.htmx:
+            return HttpResponse(headers={
+                'HX-Redirect': obj.get_absolute_url(),
+            })
+        else:
+            return redirect(obj.get_absolute_url())
+
     #
     # Request handlers
     #
@@ -334,8 +393,15 @@ class ObjectDeleteView(GetReturnURLMixin, BaseObjectView):
         obj = self.get_object(**kwargs)
         form = ConfirmationForm(initial=request.GET)
 
+        try:
+            dependent_objects = self._get_dependent_objects(obj)
+        except ProtectedError as e:
+            return self._handle_protected_objects(obj, e.protected_objects, request, e)
+        except RestrictedError as e:
+            return self._handle_protected_objects(obj, e.restricted_objects, request, e)
+
         # If this is an HTMX request, return only the rendered deletion form as modal content
-        if is_htmx(request):
+        if htmx_partial(request):
             viewname = get_viewname(self.queryset.model, action='delete')
             form_url = reverse(viewname, kwargs={'pk': obj.pk})
             return render(request, 'htmx/delete_form.html', {
@@ -343,6 +409,7 @@ class ObjectDeleteView(GetReturnURLMixin, BaseObjectView):
                 'object_type': self.queryset.model._meta.verbose_name,
                 'form': form,
                 'form_url': form_url,
+                'dependent_objects': dependent_objects,
                 **self.get_extra_context(request, obj),
             })
 
@@ -350,6 +417,7 @@ class ObjectDeleteView(GetReturnURLMixin, BaseObjectView):
             'object': obj,
             'form': form,
             'return_url': self.get_return_url(request, obj),
+            'dependent_objects': dependent_objects,
             **self.get_extra_context(request, obj),
         })
 
@@ -374,8 +442,8 @@ class ObjectDeleteView(GetReturnURLMixin, BaseObjectView):
             try:
                 obj.delete()
 
-            except ProtectedError as e:
-                logger.info("Caught ProtectedError while attempting to delete object")
+            except (ProtectedError, RestrictedError) as e:
+                logger.info(f"Caught {type(e)} while attempting to delete objects")
                 handle_protectederror([obj], request, e)
                 return redirect(obj.get_absolute_url())
 
@@ -435,7 +503,7 @@ class ComponentCreateView(GetReturnURLMixin, BaseObjectView):
         instance = self.alter_object(self.queryset.model(), request)
 
         # If this is an HTMX request, return only the rendered form HTML
-        if is_htmx(request):
+        if htmx_partial(request):
             return render(request, 'htmx/form.html', {
                 'form': form,
             })
@@ -502,7 +570,7 @@ class ComponentCreateView(GetReturnURLMixin, BaseObjectView):
                 except (AbortRequest, PermissionsViolation) as e:
                     logger.debug(e.message)
                     form.add_error(None, e.message)
-                    clear_webhooks.send(sender=self)
+                    clear_events.send(sender=self)
 
         return render(request, self.template_name, {
             'object': instance,

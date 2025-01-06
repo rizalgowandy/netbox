@@ -1,6 +1,6 @@
-from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
 
+from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Location, Manufacturer, Platform, Region, Site, SiteGroup
 from extras.models import ConfigContext, Tag
 from tenancy.models import Tenant, TenantGroup
@@ -22,7 +22,7 @@ class TagTest(TestCase):
 
         # Create a Tag that can only be applied to Regions
         tag = Tag.objects.create(name='Tag 1', slug='tag-1')
-        tag.object_types.add(ContentType.objects.get_by_natural_key('dcim', 'region'))
+        tag.object_types.add(ObjectType.objects.get_by_natural_key('dcim', 'region'))
 
         # Apply the Tag to a Region
         region.tags.add(tag)
@@ -49,11 +49,11 @@ class ConfigContextTest(TestCase):
         sitegroup = SiteGroup.objects.create(name='Site Group')
         site = Site.objects.create(name='Site 1', slug='site-1', region=region, group=sitegroup)
         location = Location.objects.create(name='Location 1', slug='location-1', site=site)
-        platform = Platform.objects.create(name='Platform')
+        Platform.objects.create(name='Platform')
         tenantgroup = TenantGroup.objects.create(name='Tenant Group')
-        tenant = Tenant.objects.create(name='Tenant', group=tenantgroup)
-        tag1 = Tag.objects.create(name='Tag', slug='tag')
-        tag2 = Tag.objects.create(name='Tag2', slug='tag2')
+        Tenant.objects.create(name='Tenant', group=tenantgroup)
+        Tag.objects.create(name='Tag', slug='tag')
+        Tag.objects.create(name='Tag2', slug='tag2')
 
         Device.objects.create(
             name='Device 1',
@@ -270,7 +270,12 @@ class ConfigContextTest(TestCase):
         tag = Tag.objects.first()
         cluster_type = ClusterType.objects.create(name="Cluster Type")
         cluster_group = ClusterGroup.objects.create(name="Cluster Group")
-        cluster = Cluster.objects.create(name="Cluster", group=cluster_group, type=cluster_type)
+        cluster = Cluster.objects.create(
+            name="Cluster",
+            group=cluster_group,
+            type=cluster_type,
+            site=site,
+        )
 
         region_context = ConfigContext.objects.create(
             name="region",
@@ -353,6 +358,41 @@ class ConfigContextTest(TestCase):
 
         annotated_queryset = VirtualMachine.objects.filter(name=virtual_machine.name).annotate_config_context_data()
         self.assertEqual(virtual_machine.get_config_context(), annotated_queryset[0].get_config_context())
+
+    def test_virtualmachine_site_context(self):
+        """
+        Check that config context associated with a site applies to a VM whether the VM is assigned
+        directly to that site or via its cluster.
+        """
+        site = Site.objects.first()
+        cluster_type = ClusterType.objects.create(name="Cluster Type")
+        cluster = Cluster.objects.create(name="Cluster", type=cluster_type, site=site)
+        vm_role = DeviceRole.objects.first()
+
+        # Create a ConfigContext associated with the site
+        context = ConfigContext.objects.create(
+            name="context1",
+            weight=100,
+            data={"foo": True}
+        )
+        context.sites.add(site)
+
+        # Create one VM assigned directly to the site, and one assigned via the cluster
+        vm1 = VirtualMachine.objects.create(name="VM 1", site=site, role=vm_role)
+        vm2 = VirtualMachine.objects.create(name="VM 2", cluster=cluster, role=vm_role)
+
+        # Check that their individually-rendered config contexts are identical
+        self.assertEqual(
+            vm1.get_config_context(),
+            vm2.get_config_context()
+        )
+
+        # Check that their annotated config contexts are identical
+        vms = VirtualMachine.objects.filter(pk__in=(vm1.pk, vm2.pk)).annotate_config_context_data()
+        self.assertEqual(
+            vms[0].get_config_context(),
+            vms[1].get_config_context()
+        )
 
     def test_multiple_tags_return_distinct_objects(self):
         """

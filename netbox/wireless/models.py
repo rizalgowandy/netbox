@@ -2,11 +2,11 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
-from mptt.models import MPTTModel
 
 from dcim.choices import LinkStatusChoices
 from dcim.constants import WIRELESS_IFACE_TYPES
 from netbox.models import NestedGroupModel, PrimaryModel
+from utilities.conversion import to_meters
 from .choices import *
 from .constants import *
 
@@ -161,6 +161,26 @@ class WirelessLink(WirelessAuthenticationBase, PrimaryModel):
         choices=LinkStatusChoices,
         default=LinkStatusChoices.STATUS_CONNECTED
     )
+    distance = models.DecimalField(
+        verbose_name=_('distance'),
+        max_digits=8,
+        decimal_places=2,
+        blank=True,
+        null=True
+    )
+    distance_unit = models.CharField(
+        verbose_name=_('distance unit'),
+        max_length=50,
+        choices=WirelessLinkDistanceUnitChoices,
+        blank=True,
+    )
+    # Stores the normalized distance (in meters) for database ordering
+    _abs_distance = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        blank=True,
+        null=True
+    )
     tenant = models.ForeignKey(
         to='tenancy.Tenant',
         on_delete=models.PROTECT,
@@ -209,22 +229,36 @@ class WirelessLink(WirelessAuthenticationBase, PrimaryModel):
         return LinkStatusChoices.colors.get(self.status)
 
     def clean(self):
+        super().clean()
+
+        # Validate distance and distance_unit
+        if self.distance is not None and not self.distance_unit:
+            raise ValidationError(_("Must specify a unit when setting a wireless distance"))
 
         # Validate interface types
         if self.interface_a.type not in WIRELESS_IFACE_TYPES:
             raise ValidationError({
                 'interface_a': _(
-                    "{type_display} is not a wireless interface."
-                ).format(type_display=self.interface_a.get_type_display())
+                    "{type} is not a wireless interface."
+                ).format(type=self.interface_a.get_type_display())
             })
         if self.interface_b.type not in WIRELESS_IFACE_TYPES:
             raise ValidationError({
                 'interface_a': _(
-                    "{type_display} is not a wireless interface."
-                ).format(type_display=self.interface_b.get_type_display())
+                    "{type} is not a wireless interface."
+                ).format(type=self.interface_b.get_type_display())
             })
 
     def save(self, *args, **kwargs):
+        # Store the given distance (if any) in meters for use in database ordering
+        if self.distance is not None and self.distance_unit:
+            self._abs_distance = to_meters(self.distance, self.distance_unit)
+        else:
+            self._abs_distance = None
+
+        # Clear distance_unit if no distance is defined
+        if self.distance is None:
+            self.distance_unit = ''
 
         # Store the parent Device for the A and B interfaces
         self._interface_a_device = self.interface_a.device

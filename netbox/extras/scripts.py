@@ -2,34 +2,31 @@ import inspect
 import json
 import logging
 import os
-import traceback
-from datetime import timedelta
 
 import yaml
 from django import forms
 from django.conf import settings
 from django.core.validators import RegexValidator
-from django.db import transaction
+from django.utils import timezone
 from django.utils.functional import classproperty
+from django.utils.translation import gettext as _
 
-from core.choices import JobStatusChoices
-from core.models import Job
-from extras.api.serializers import ScriptOutputSerializer
 from extras.choices import LogLevelChoices
 from extras.models import ScriptModule
-from extras.signals import clear_webhooks
 from ipam.formfields import IPAddressFormField, IPNetworkFormField
 from ipam.validators import MaxPrefixLengthValidator, MinPrefixLengthValidator, prefix_validator
-from utilities.exceptions import AbortScript, AbortTransaction
 from utilities.forms import add_blank_choice
 from utilities.forms.fields import DynamicModelChoiceField, DynamicModelMultipleChoiceField
-from .context_managers import change_logging
+from utilities.forms.widgets import DatePicker, DateTimePicker
 from .forms import ScriptForm
+
 
 __all__ = (
     'BaseScript',
     'BooleanVar',
     'ChoiceVar',
+    'DateVar',
+    'DateTimeVar',
     'FileVar',
     'IntegerVar',
     'IPAddressVar',
@@ -42,7 +39,6 @@ __all__ = (
     'StringVar',
     'TextVar',
     'get_module_and_script',
-    'run_script',
 )
 
 
@@ -171,6 +167,28 @@ class ChoiceVar(ScriptVariable):
         self.field_attrs['choices'] = add_blank_choice(choices)
 
 
+class DateVar(ScriptVariable):
+    """
+    A date.
+    """
+    form_field = forms.DateField
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form_field.widget = DatePicker()
+
+
+class DateTimeVar(ScriptVariable):
+    """
+    A date and a time.
+    """
+    form_field = forms.DateTimeField
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.form_field.widget = DateTimePicker()
+
+
 class MultiChoiceVar(ScriptVariable):
     """
     Like ChoiceVar, but allows for the selection of multiple choices.
@@ -190,16 +208,19 @@ class ObjectVar(ScriptVariable):
 
     :param model: The NetBox model being referenced
     :param query_params: A dictionary of additional query parameters to attach when making REST API requests (optional)
+    :param context: A custom dictionary mapping template context variables to fields, used when rendering <option>
+        elements within the dropdown menu (optional)
     :param null_option: The label to use as a "null" selection option (optional)
     """
     form_field = DynamicModelChoiceField
 
-    def __init__(self, model, query_params=None, null_option=None, *args, **kwargs):
+    def __init__(self, model, query_params=None, context=None, null_option=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.field_attrs.update({
             'queryset': model.objects.all(),
             'query_params': query_params,
+            'context': context,
             'null_option': null_option,
         })
 
@@ -270,17 +291,28 @@ class BaseScript:
         pass
 
     def __init__(self):
+        self.messages = []  # Primary script log
+        self.tests = {}  # Mapping of logs for test methods
+        self.output = ''
+        self.failed = False
+        self._current_test = None  # Tracks the current test method being run (if any)
 
         # Initiate the log
         self.logger = logging.getLogger(f"netbox.scripts.{self.__module__}.{self.__class__.__name__}")
-        self.log = []
 
         # Declare the placeholder for the current request
         self.request = None
 
-        # Grab some info about the script
-        self.filename = inspect.getfile(self.__class__)
-        self.source = inspect.getsource(self.__class__)
+        # Compile test methods and initialize results skeleton
+        for method in dir(self):
+            if method.startswith('test_') and callable(getattr(self, method)):
+                self.tests[method] = {
+                    LogLevelChoices.LOG_SUCCESS: 0,
+                    LogLevelChoices.LOG_INFO: 0,
+                    LogLevelChoices.LOG_WARNING: 0,
+                    LogLevelChoices.LOG_FAILURE: 0,
+                    'log': [],
+                }
 
     def __str__(self):
         return self.name
@@ -331,6 +363,14 @@ class BaseScript:
     def scheduling_enabled(self):
         return getattr(self.Meta, 'scheduling_enabled', True)
 
+    @property
+    def filename(self):
+        return inspect.getfile(self.__class__)
+
+    @property
+    def source(self):
+        return inspect.getsource(self.__class__)
+
     @classmethod
     def _get_vars(cls):
         vars = {}
@@ -356,9 +396,28 @@ class BaseScript:
         return ordered_vars
 
     def run(self, data, commit):
-        raise NotImplementedError("The script must define a run() method.")
+        """
+        Override this method with custom script logic.
+        """
 
+        # Backward compatibility for legacy Reports
+        self.pre_run()
+        self.run_tests()
+        self.post_run()
+
+    def get_job_data(self):
+        """
+        Return a dictionary of data to attach to the script's Job.
+        """
+        return {
+            'log': self.messages,
+            'output': self.output,
+            'tests': self.tests,
+        }
+
+    #
     # Form rendering
+    #
 
     def get_fieldsets(self):
         fieldsets = []
@@ -367,11 +426,11 @@ class BaseScript:
             fieldsets.extend(self.fieldsets)
         else:
             fields = list(name for name, _ in self._get_vars().items())
-            fieldsets.append(('Script Data', fields))
+            fieldsets.append((_('Script Data'), fields))
 
         # Append the default fieldset if defined in the Meta class
         exec_parameters = ('_schedule_at', '_interval', '_commit') if self.scheduling_enabled else ('_commit',)
-        fieldsets.append(('Script Execution Parameters', exec_parameters))
+        fieldsets.append((_('Script Execution Parameters'), exec_parameters))
 
         return fieldsets
 
@@ -397,29 +456,70 @@ class BaseScript:
 
         return form
 
+    #
     # Logging
+    #
 
-    def log_debug(self, message):
-        self.logger.log(logging.DEBUG, message)
-        self.log.append((LogLevelChoices.LOG_DEFAULT, str(message)))
+    def _log(self, message, obj=None, level=LogLevelChoices.LOG_DEFAULT):
+        """
+        Log a message. Do not call this method directly; use one of the log_* wrappers below.
+        """
+        if level not in LogLevelChoices.values():
+            raise ValueError(f"Invalid logging level: {level}")
 
-    def log_success(self, message):
-        self.logger.log(logging.INFO, message)  # No syslog equivalent for SUCCESS
-        self.log.append((LogLevelChoices.LOG_SUCCESS, str(message)))
+        # A test method is currently active, so log the message using legacy Report logging
+        if self._current_test:
 
-    def log_info(self, message):
-        self.logger.log(logging.INFO, message)
-        self.log.append((LogLevelChoices.LOG_INFO, str(message)))
+            # Increment the event counter for this level
+            if level in self.tests[self._current_test]:
+                self.tests[self._current_test][level] += 1
 
-    def log_warning(self, message):
-        self.logger.log(logging.WARNING, message)
-        self.log.append((LogLevelChoices.LOG_WARNING, str(message)))
+            # Record message (if any) to the report log
+            if message:
+                # TODO: Use a dataclass for test method logs
+                self.tests[self._current_test]['log'].append((
+                    timezone.now().isoformat(),
+                    level,
+                    str(obj) if obj else None,
+                    obj.get_absolute_url() if hasattr(obj, 'get_absolute_url') else None,
+                    str(message),
+                ))
 
-    def log_failure(self, message):
-        self.logger.log(logging.ERROR, message)
-        self.log.append((LogLevelChoices.LOG_FAILURE, str(message)))
+        elif message:
 
+            # Record to the script's log
+            self.messages.append({
+                'time': timezone.now().isoformat(),
+                'status': level,
+                'message': str(message),
+                'obj': str(obj) if obj else None,
+                'url': obj.get_absolute_url() if hasattr(obj, 'get_absolute_url') else None,
+            })
+
+            # Record to the system log
+            if obj:
+                message = f"{obj}: {message}"
+            self.logger.log(LogLevelChoices.SYSTEM_LEVELS[level], message)
+
+    def log_debug(self, message=None, obj=None):
+        self._log(message, obj, level=LogLevelChoices.LOG_DEBUG)
+
+    def log_success(self, message=None, obj=None):
+        self._log(message, obj, level=LogLevelChoices.LOG_SUCCESS)
+
+    def log_info(self, message=None, obj=None):
+        self._log(message, obj, level=LogLevelChoices.LOG_INFO)
+
+    def log_warning(self, message=None, obj=None):
+        self._log(message, obj, level=LogLevelChoices.LOG_WARNING)
+
+    def log_failure(self, message=None, obj=None):
+        self._log(message, obj, level=LogLevelChoices.LOG_FAILURE)
+        self.failed = True
+
+    #
     # Convenience functions
+    #
 
     def load_yaml(self, filename):
         """
@@ -446,6 +546,39 @@ class BaseScript:
 
         return data
 
+    #
+    # Legacy Report functionality
+    #
+
+    def run_tests(self):
+        """
+        Run the report and save its results. Each test method will be executed in order.
+        """
+        self.logger.info("Running report")
+
+        try:
+            for test_name in self.tests:
+                self._current_test = test_name
+                test_method = getattr(self, test_name)
+                test_method()
+                self._current_test = None
+        except Exception as e:
+            self._current_test = None
+            self.post_run()
+            raise e
+
+    def pre_run(self):
+        """
+        Legacy method for operations performed immediately prior to running a Report.
+        """
+        pass
+
+    def post_run(self):
+        """
+        Legacy method for operations performed immediately after running a Report.
+        """
+        pass
+
 
 class Script(BaseScript):
     """
@@ -468,82 +601,5 @@ def is_variable(obj):
 
 def get_module_and_script(module_name, script_name):
     module = ScriptModule.objects.get(file_path=f'{module_name}.py')
-    script = module.scripts.get(script_name)
+    script = module.scripts.get(name=script_name)
     return module, script
-
-
-def run_script(data, request, job, commit=True, **kwargs):
-    """
-    A wrapper for calling Script.run(). This performs error handling and provides a hook for committing changes. It
-    exists outside the Script class to ensure it cannot be overridden by a script author.
-    """
-    job.start()
-
-    module = ScriptModule.objects.get(pk=job.object_id)
-    script = module.scripts.get(job.name)()
-
-    logger = logging.getLogger(f"netbox.scripts.{script.full_name}")
-    logger.info(f"Running script (commit={commit})")
-
-    # Add files to form data
-    files = request.FILES
-    for field_name, fileobj in files.items():
-        data[field_name] = fileobj
-
-    # Add the current request as a property of the script
-    script.request = request
-
-    def _run_script():
-        """
-        Core script execution task. We capture this within a subfunction to allow for conditionally wrapping it with
-        the change_logging context manager (which is bypassed if commit == False).
-        """
-        try:
-            try:
-                with transaction.atomic():
-                    script.output = script.run(data=data, commit=commit)
-                    if not commit:
-                        raise AbortTransaction()
-            except AbortTransaction:
-                script.log_info("Database changes have been reverted automatically.")
-                clear_webhooks.send(request)
-            job.data = ScriptOutputSerializer(script).data
-            job.terminate()
-        except Exception as e:
-            if type(e) is AbortScript:
-                script.log_failure(f"Script aborted with error: {e}")
-                logger.error(f"Script aborted with error: {e}")
-            else:
-                stacktrace = traceback.format_exc()
-                script.log_failure(f"An exception occurred: `{type(e).__name__}: {e}`\n```\n{stacktrace}\n```")
-                logger.error(f"Exception raised during script execution: {e}")
-            script.log_info("Database changes have been reverted due to error.")
-            job.data = ScriptOutputSerializer(script).data
-            job.terminate(status=JobStatusChoices.STATUS_ERRORED)
-            clear_webhooks.send(request)
-
-        logger.info(f"Script completed in {job.duration}")
-
-    # Execute the script. If commit is True, wrap it with the change_logging context manager to ensure we process
-    # change logging, webhooks, etc.
-    if commit:
-        with change_logging(request):
-            _run_script()
-    else:
-        _run_script()
-
-    # Schedule the next job if an interval has been set
-    if job.interval:
-        new_scheduled_time = job.scheduled + timedelta(minutes=job.interval)
-        Job.enqueue(
-            run_script,
-            instance=job.object,
-            name=job.name,
-            user=job.user,
-            schedule_at=new_scheduled_time,
-            interval=job.interval,
-            job_timeout=script.job_timeout,
-            data=data,
-            request=request,
-            commit=commit
-        )

@@ -6,8 +6,8 @@ This section of the documentation discusses installing and configuring the NetBo
 
 Begin by installing all system packages required by NetBox and its dependencies.
 
-!!! warning "Python 3.8 or later required"
-    NetBox requires Python 3.8, 3.9, 3.10 or 3.11.
+!!! warning "Python 3.10 or later required"
+    NetBox supports Python 3.10, 3.11, and 3.12.
 
 === "Ubuntu"
 
@@ -21,7 +21,7 @@ Begin by installing all system packages required by NetBox and its dependencies.
     sudo yum install -y gcc libxml2-devel libxslt-devel libffi-devel libpq-devel openssl-devel redhat-rpm-config
     ```
 
-Before continuing, check that your installed Python version is at least 3.8:
+Before continuing, check that your installed Python version is at least 3.10:
 
 ```no-highlight
 python3 -V
@@ -227,6 +227,17 @@ sudo sh -c "echo 'boto3' >> /opt/netbox/local_requirements.txt"
 !!! info
     These packages were previously required in NetBox v3.5 but now are optional.
 
+### Sentry Integration
+
+NetBox may be configured to send error reports to [Sentry](../administration/error-reporting.md) for analysis. This integration requires installation of the `sentry-sdk` Python library.
+
+```no-highlight
+sudo sh -c "echo 'sentry-sdk' >> /opt/netbox/local_requirements.txt"
+```
+
+!!! info
+    Sentry integration was previously included by default in NetBox v3.6 but is now optional.
+
 ## Run the Upgrade Script
 
 Once NetBox has been configured, we're ready to proceed with the actual installation. We'll run the packaged upgrade script (`upgrade.sh`) to perform the following actions:
@@ -244,10 +255,10 @@ Once NetBox has been configured, we're ready to proceed with the actual installa
 sudo /opt/netbox/upgrade.sh
 ```
 
-Note that **Python 3.8 or later is required** for NetBox v3.2 and later releases. If the default Python installation on your server is set to a lesser version,  pass the path to the supported installation as an environment variable named `PYTHON`. (Note that the environment variable must be passed _after_ the `sudo` command.)
+Note that **Python 3.10 or later is required** for NetBox v4.0 and later releases. If the default Python installation on your server is set to a lesser version,  pass the path to the supported installation as an environment variable named `PYTHON`. (Note that the environment variable must be passed _after_ the `sudo` command.)
 
 ```no-highlight
-sudo PYTHON=/usr/bin/python3.8 /opt/netbox/upgrade.sh
+sudo PYTHON=/usr/bin/python3.10 /opt/netbox/upgrade.sh
 ```
 
 !!! note

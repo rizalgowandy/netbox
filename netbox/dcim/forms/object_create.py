@@ -4,6 +4,7 @@ from django.utils.translation import gettext_lazy as _
 from dcim.models import *
 from netbox.forms import NetBoxModelForm
 from utilities.forms.fields import DynamicModelChoiceField, DynamicModelMultipleChoiceField, ExpandableNameField
+from utilities.forms.rendering import FieldSet
 from utilities.forms.widgets import APISelect
 from . import model_forms
 
@@ -113,7 +114,7 @@ class FrontPortTemplateCreateForm(ComponentCreateForm, model_forms.FrontPortTemp
 
     # Override fieldsets from FrontPortTemplateForm to omit rear_port_position
     fieldsets = (
-        (None, ('device_type', 'module_type', 'name', 'label', 'type', 'color', 'rear_port', 'description')),
+        FieldSet('device_type', 'module_type', 'name', 'label', 'type', 'color', 'rear_port', 'description'),
     )
 
     class Meta(model_forms.FrontPortTemplateForm.Meta):
@@ -150,6 +151,23 @@ class FrontPortTemplateCreateForm(ComponentCreateForm, model_forms.FrontPortTemp
                         ('{}:{}'.format(rear_port.pk, i), '{}:{}'.format(rear_port.name, i))
                     )
         self.fields['rear_port'].choices = choices
+
+    def clean(self):
+
+        # Check that the number of FrontPortTemplates to be created matches the selected number of RearPortTemplate
+        # positions
+        frontport_count = len(self.cleaned_data['name'])
+        rearport_count = len(self.cleaned_data['rear_port'])
+        if frontport_count != rearport_count:
+            raise forms.ValidationError({
+                'rear_port': _(
+                    "The number of front port templates to be created ({frontport_count}) must match the selected "
+                    "number of rear port positions ({rearport_count})."
+                ).format(
+                    frontport_count=frontport_count,
+                    rearport_count=rearport_count
+                )
+            })
 
     def get_iterative_data(self, iteration):
 
@@ -225,14 +243,6 @@ class InterfaceCreateForm(ComponentCreateForm, model_forms.InterfaceForm):
     class Meta(model_forms.InterfaceForm.Meta):
         exclude = ('name', 'label')
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        if 'module' in self.fields:
-            self.fields['name'].help_text += _(
-                "The string <code>{module}</code> will be replaced with the position of the assigned module, if any."
-            )
-
 
 class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
     device = DynamicModelChoiceField(
@@ -243,8 +253,8 @@ class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
             # TODO: Clean up the application of HTMXSelect attributes
             attrs={
                 'hx-get': '.',
-                'hx-include': f'#form_fields',
-                'hx-target': f'#form_fields',
+                'hx-include': '#form_fields',
+                'hx-target': '#form_fields',
             }
         )
     )
@@ -257,9 +267,9 @@ class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
 
     # Override fieldsets from FrontPortForm to omit rear_port_position
     fieldsets = (
-        (None, (
+        FieldSet(
             'device', 'module', 'name', 'label', 'type', 'color', 'rear_port', 'mark_connected', 'description', 'tags',
-        )),
+        ),
     )
 
     class Meta(model_forms.FrontPortForm.Meta):
@@ -290,6 +300,22 @@ class FrontPortCreateForm(ComponentCreateForm, model_forms.FrontPortForm):
                         ('{}:{}'.format(rear_port.pk, i), '{}:{}'.format(rear_port.name, i))
                     )
         self.fields['rear_port'].choices = choices
+
+    def clean(self):
+
+        # Check that the number of FrontPorts to be created matches the selected number of RearPort positions
+        frontport_count = len(self.cleaned_data['name'])
+        rearport_count = len(self.cleaned_data['rear_port'])
+        if frontport_count != rearport_count:
+            raise forms.ValidationError({
+                'rear_port': _(
+                    "The number of front ports to be created ({frontport_count}) must match the selected number of "
+                    "rear port positions ({rearport_count})."
+                ).format(
+                    frontport_count=frontport_count,
+                    rearport_count=rearport_count
+                )
+            })
 
     def get_iterative_data(self, iteration):
 

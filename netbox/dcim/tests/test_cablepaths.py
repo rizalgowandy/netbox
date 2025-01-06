@@ -394,6 +394,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 2)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 2
         cable2.delete()
         path1 = self.assertPathExists(
@@ -449,6 +452,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 2)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 2
         cable2.delete()
@@ -557,6 +563,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 4)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 3
         cable3.delete()
@@ -672,6 +681,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 4)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 3
         cable3.delete()
@@ -804,6 +816,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 4)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 3
         cable3.delete()
 
@@ -931,6 +946,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 4)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 5
         cable5.delete()
 
@@ -1034,6 +1052,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 4)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 3
         cable3.delete()
 
@@ -1093,6 +1114,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 3)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 1
         cable1.delete()
 
@@ -1135,6 +1159,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 1)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
     def test_210_interface_to_circuittermination(self):
         """
         [IF1] --C1-- [CT1]
@@ -1155,6 +1182,9 @@ class CablePathTestCase(TestCase):
             is_complete=False
         )
         self.assertEqual(CablePath.objects.count(), 1)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 1
         cable1.delete()
@@ -1211,6 +1241,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 2)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 2
         cable2.delete()
@@ -1277,6 +1310,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 2)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 2
         cable2.delete()
         path1 = self.assertPathExists(
@@ -1314,6 +1350,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 1)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 1
         cable1.delete()
         self.assertEqual(CablePath.objects.count(), 0)
@@ -1341,6 +1380,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 1)
         self.assertTrue(CablePath.objects.first().is_complete)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 1
         cable1.delete()
@@ -1439,6 +1481,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 4)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cables 3-4
         cable3.delete()
         cable4.delete()
@@ -1494,6 +1539,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 2)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 2
         cable2.delete()
@@ -1577,6 +1625,9 @@ class CablePathTestCase(TestCase):
             is_complete=True
         )
         self.assertEqual(CablePath.objects.count(), 2)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
         # Delete cable 2
         cable2.delete()
@@ -1697,6 +1748,9 @@ class CablePathTestCase(TestCase):
         )
         self.assertEqual(CablePath.objects.count(), 4)
 
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
         # Delete cable 3
         cable3.delete()
 
@@ -1783,6 +1837,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 2)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
     def test_220_interface_to_interface_duplex_via_multiple_front_and_rear_ports(self):
         """
@@ -1876,6 +1933,9 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 3)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
 
     def test_221_non_symmetric_paths(self):
         """
@@ -1996,6 +2056,52 @@ class CablePathTestCase(TestCase):
             is_active=True
         )
         self.assertEqual(CablePath.objects.count(), 3)
+
+        # Test SVG generation
+        CableTraceSVG(interface1).render()
+
+    def test_222_single_path_via_multiple_singleposition_rear_ports(self):
+        """
+        [IF1] --C1-- [FP1] [RP1] --C2-- [IF2]
+                     [FP2] [RP2]
+        """
+        interface1 = Interface.objects.create(device=self.device, name='Interface 1')
+        interface2 = Interface.objects.create(device=self.device, name='Interface 2')
+        rearport1 = RearPort.objects.create(device=self.device, name='Rear Port 1', positions=1)
+        rearport2 = RearPort.objects.create(device=self.device, name='Rear Port 2', positions=1)
+        frontport1 = FrontPort.objects.create(
+            device=self.device, name='Front Port 1', rear_port=rearport1, rear_port_position=1
+        )
+        frontport2 = FrontPort.objects.create(
+            device=self.device, name='Front Port 2', rear_port=rearport2, rear_port_position=1
+        )
+
+        cable1 = Cable(
+            a_terminations=[interface1],
+            b_terminations=[frontport1, frontport2]
+        )
+        cable1.save()
+        self.assertEqual(CablePath.objects.count(), 1)
+
+        cable2 = Cable(
+            a_terminations=[rearport1, rearport2],
+            b_terminations=[interface2]
+        )
+        cable2.save()
+        self.assertEqual(CablePath.objects.count(), 2)
+
+        self.assertPathExists(
+            (interface1, cable1, (frontport1, frontport2), (rearport1, rearport2), cable2, interface2),
+            is_complete=True
+        )
+        self.assertPathExists(
+            (interface2, cable2, (rearport1, rearport2), (frontport1, frontport2), cable1, interface1),
+            is_complete=True
+        )
+
+        # Test SVG generation both directions
+        CableTraceSVG(interface1).render()
+        CableTraceSVG(interface2).render()
 
     def test_301_create_path_via_existing_cable(self):
         """
@@ -2156,7 +2262,7 @@ class CablePathTestCase(TestCase):
         device = Device.objects.create(
             site=self.site,
             device_type=self.device.device_type,
-            device_role=self.device.device_role,
+            role=self.device.role,
             name='Test mid-span Device'
         )
         interface1 = Interface.objects.create(device=self.device, name='Interface 1')

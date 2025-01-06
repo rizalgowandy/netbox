@@ -2,8 +2,8 @@ import logging
 
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import login as auth_login, logout as auth_logout
-from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth import login as auth_login, logout as auth_logout, update_session_auth_hash
+from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.auth.models import update_last_login
 from django.contrib.auth.signals import user_logged_in
@@ -13,13 +13,16 @@ from django.shortcuts import render, resolve_url
 from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.utils.http import url_has_allowed_host_and_scheme, urlencode
+from django.utils.translation import gettext_lazy as _
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic import View
 from social_core.backends.utils import load_backends
 
 from account.models import UserToken
-from extras.models import Bookmark, ObjectChange
-from extras.tables import BookmarkTable, ObjectChangeTable
+from core.models import ObjectChange
+from core.tables import ObjectChangeTable
+from extras.models import Bookmark
+from extras.tables import BookmarkTable, NotificationTable, SubscriptionTable
 from netbox.authentication import get_auth_backend_display, get_saml_idps
 from netbox.config import get_config
 from netbox.views import generic
@@ -43,10 +46,20 @@ class LoginView(View):
         return super().dispatch(*args, **kwargs)
 
     def gen_auth_data(self, name, url, params):
-        display_name, icon_name = get_auth_backend_display(name)
+        display_name, icon_source = get_auth_backend_display(name)
+
+        icon_name = None
+        icon_img = None
+        if icon_source:
+            if '://' in icon_source:
+                icon_img = icon_source
+            else:
+                icon_name = icon_source
+
         return {
             'display_name': display_name,
             'icon_name': icon_name,
+            'icon_img': icon_img,
             'url': f'{url}?{urlencode(params)}',
         }
 
@@ -71,7 +84,7 @@ class LoginView(View):
         return auth_backends
 
     def get(self, request):
-        form = forms.LoginForm(request)
+        form = AuthenticationForm(request)
 
         if request.user.is_authenticated:
             logger = logging.getLogger('netbox.auth.login')
@@ -84,7 +97,7 @@ class LoginView(View):
 
     def post(self, request):
         logger = logging.getLogger('netbox.auth.login')
-        form = forms.LoginForm(request, data=request.POST)
+        form = AuthenticationForm(request, data=request.POST)
 
         if form.is_valid():
             logger.debug("Login form validation was successful")
@@ -98,15 +111,21 @@ class LoginView(View):
             # Authenticate user
             auth_login(request, form.get_user())
             logger.info(f"User {request.user} successfully authenticated")
-            messages.success(request, f"Logged in as {request.user}.")
+            messages.success(request, _("Logged in as {user}.").format(user=request.user))
 
             # Ensure the user has a UserConfig defined. (This should normally be handled by
             # create_userconfig() on user creation.)
             if not hasattr(request.user, 'config'):
-                config = get_config()
-                UserConfig(user=request.user, data=config.DEFAULT_USER_PREFERENCES).save()
+                request.user.config = get_config()
+                UserConfig(user=request.user, data=request.user.config.DEFAULT_USER_PREFERENCES).save()
 
-            return self.redirect_to_next(request, logger)
+            response = self.redirect_to_next(request, logger)
+
+            # Set the user's preferred language (if any)
+            if language := request.user.config.get('locale.language'):
+                response.set_cookie(settings.LANGUAGE_COOKIE_NAME, language, max_age=request.session.get_expiry_age())
+
+            return response
 
         else:
             logger.debug(f"Login form validation failed for username: {form['username'].value()}")
@@ -142,11 +161,12 @@ class LogoutView(View):
         username = request.user
         auth_logout(request)
         logger.info(f"User {username} has logged out")
-        messages.info(request, "You have logged out.")
+        messages.info(request, _("You have logged out."))
 
-        # Delete session key cookie (if set) upon logout
+        # Delete session key & language cookies (if set) upon logout
         response = HttpResponseRedirect(resolve_url(settings.LOGOUT_REDIRECT_URL))
         response.delete_cookie('session_key')
+        response.delete_cookie(settings.LANGUAGE_COOKIE_NAME)
 
         return response
 
@@ -193,8 +213,16 @@ class UserConfigView(LoginRequiredMixin, View):
         if form.is_valid():
             form.save()
 
-            messages.success(request, "Your preferences have been updated.")
-            return redirect('account:preferences')
+            messages.success(request, _("Your preferences have been updated."))
+            response = redirect('account:preferences')
+
+            # Set/clear language cookie
+            if language := form.cleaned_data['locale.language']:
+                response.set_cookie(settings.LANGUAGE_COOKIE_NAME, language, max_age=request.session.get_expiry_age())
+            else:
+                response.delete_cookie(settings.LANGUAGE_COOKIE_NAME)
+
+            return response
 
         return render(request, self.template_name, {
             'form': form,
@@ -208,10 +236,10 @@ class ChangePasswordView(LoginRequiredMixin, View):
     def get(self, request):
         # LDAP users cannot change their password here
         if getattr(request.user, 'ldap_username', None):
-            messages.warning(request, "LDAP-authenticated user credentials cannot be changed within NetBox.")
+            messages.warning(request, _("LDAP-authenticated user credentials cannot be changed within NetBox."))
             return redirect('account:profile')
 
-        form = forms.PasswordChangeForm(user=request.user)
+        form = PasswordChangeForm(user=request.user)
 
         return render(request, self.template_name, {
             'form': form,
@@ -219,11 +247,11 @@ class ChangePasswordView(LoginRequiredMixin, View):
         })
 
     def post(self, request):
-        form = forms.PasswordChangeForm(user=request.user, data=request.POST)
+        form = PasswordChangeForm(user=request.user, data=request.POST)
         if form.is_valid():
             form.save()
             update_session_auth_hash(request, form.user)
-            messages.success(request, "Your password has been changed successfully.")
+            messages.success(request, _("Your password has been changed successfully."))
             return redirect('account:profile')
 
         return render(request, self.template_name, {
@@ -246,6 +274,36 @@ class BookmarkListView(LoginRequiredMixin, generic.ObjectListView):
     def get_extra_context(self, request):
         return {
             'active_tab': 'bookmarks',
+        }
+
+
+#
+# Notifications & subscriptions
+#
+
+class NotificationListView(LoginRequiredMixin, generic.ObjectListView):
+    table = NotificationTable
+    template_name = 'account/notifications.html'
+
+    def get_queryset(self, request):
+        return request.user.notifications.all()
+
+    def get_extra_context(self, request):
+        return {
+            'active_tab': 'notifications',
+        }
+
+
+class SubscriptionListView(LoginRequiredMixin, generic.ObjectListView):
+    table = SubscriptionTable
+    template_name = 'account/subscriptions.html'
+
+    def get_queryset(self, request):
+        return request.user.subscriptions.all()
+
+    def get_extra_context(self, request):
+        return {
+            'active_tab': 'subscriptions',
         }
 
 

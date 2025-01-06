@@ -1,3 +1,4 @@
+import logging
 import uuid
 from functools import cached_property
 from hashlib import sha256
@@ -7,20 +8,18 @@ import feedparser
 import requests
 from django import forms
 from django.conf import settings
-from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
-from django.db.models import Q
 from django.template.loader import render_to_string
 from django.urls import NoReverseMatch, resolve, reverse
 from django.utils.translation import gettext as _
 
+from core.models import ObjectType
 from extras.choices import BookmarkOrderingChoices
-from extras.utils import FeatureQuery
-from utilities.choices import ButtonColorChoices
-from utilities.forms import BootstrapMixin
+from utilities.object_types import object_type_identifier, object_type_name
 from utilities.permissions import get_permission_for_model
+from utilities.querydict import dict_to_querydict
 from utilities.templatetags.builtins.filters import render_markdown
-from utilities.utils import content_type_identifier, content_type_name, dict_to_querydict, get_viewname
+from utilities.views import get_viewname
 from .utils import register_widget
 
 __all__ = (
@@ -33,14 +32,20 @@ __all__ = (
     'WidgetConfigForm',
 )
 
+logger = logging.getLogger('netbox.data_backends')
 
-def get_content_type_labels():
+
+def get_object_type_choices():
     return [
-        (content_type_identifier(ct), content_type_name(ct))
-        for ct in ContentType.objects.filter(
-            FeatureQuery('export_templates').get_query() | Q(app_label='extras', model='objectchange') |
-            Q(app_label='extras', model='configcontext')
-        ).order_by('app_label', 'model')
+        (object_type_identifier(ot), object_type_name(ot))
+        for ot in ObjectType.objects.public().order_by('app_label', 'model')
+    ]
+
+
+def get_bookmarks_object_type_choices():
+    return [
+        (object_type_identifier(ot), object_type_name(ot))
+        for ot in ObjectType.objects.with_feature('bookmarks').order_by('app_label', 'model')
     ]
 
 
@@ -51,12 +56,19 @@ def get_models_from_content_types(content_types):
     models = []
     for content_type_id in content_types:
         app_label, model_name = content_type_id.split('.')
-        content_type = ContentType.objects.get_by_natural_key(app_label, model_name)
-        models.append(content_type.model_class())
+        try:
+            content_type = ObjectType.objects.get_by_natural_key(app_label, model_name)
+            if content_type.model_class():
+                models.append(content_type.model_class())
+            else:
+                logger.debug(f"Dashboard Widget model_class not found: {app_label}:{model_name}")
+        except ObjectType.DoesNotExist:
+            logger.debug(f"Dashboard Widget ObjectType not found: {app_label}:{model_name}")
+
     return models
 
 
-class WidgetConfigForm(BootstrapMixin, forms.Form):
+class WidgetConfigForm(forms.Form):
     pass
 
 
@@ -110,27 +122,13 @@ class DashboardWidget:
         Params:
             request: The current request
         """
-        raise NotImplementedError(f"{self.__class__} must define a render() method.")
+        raise NotImplementedError(_("{class_name} must define a render() method.").format(
+            class_name=self.__class__
+        ))
 
     @property
     def name(self):
         return f'{self.__class__.__module__.split(".")[0]}.{self.__class__.__name__}'
-
-    @property
-    def fg_color(self):
-        """
-        Return the appropriate foreground (text) color for the widget's color.
-        """
-        if self.color in (
-            ButtonColorChoices.CYAN,
-            ButtonColorChoices.GRAY,
-            ButtonColorChoices.GREY,
-            ButtonColorChoices.TEAL,
-            ButtonColorChoices.WHITE,
-            ButtonColorChoices.YELLOW,
-        ):
-            return ButtonColorChoices.BLACK
-        return ButtonColorChoices.WHITE
 
     @property
     def form_data(self):
@@ -163,7 +161,7 @@ class ObjectCountsWidget(DashboardWidget):
 
     class ConfigForm(WidgetConfigForm):
         models = forms.MultipleChoiceField(
-            choices=get_content_type_labels
+            choices=get_object_type_choices
         )
         filters = forms.JSONField(
             required=False,
@@ -176,7 +174,7 @@ class ObjectCountsWidget(DashboardWidget):
                 try:
                     dict(data)
                 except TypeError:
-                    raise forms.ValidationError("Invalid format. Object filters must be passed as a dictionary.")
+                    raise forms.ValidationError(_("Invalid format. Object filters must be passed as a dictionary."))
             return data
 
     def render(self, request):
@@ -184,10 +182,13 @@ class ObjectCountsWidget(DashboardWidget):
         for model in get_models_from_content_types(self.config['models']):
             permission = get_permission_for_model(model, 'view')
             if request.user.has_perm(permission):
-                url = reverse(get_viewname(model, 'list'))
+                try:
+                    url = reverse(get_viewname(model, 'list'))
+                except NoReverseMatch:
+                    url = None
                 qs = model.objects.restrict(request.user, 'view')
                 # Apply any specified filters
-                if filters := self.config.get('filters'):
+                if url and (filters := self.config.get('filters')):
                     params = dict_to_querydict(filters)
                     filterset = getattr(resolve(url).func.view_class, 'filterset', None)
                     qs = filterset(params, qs).qs
@@ -212,7 +213,7 @@ class ObjectListWidget(DashboardWidget):
 
     class ConfigForm(WidgetConfigForm):
         model = forms.ChoiceField(
-            choices=get_content_type_labels
+            choices=get_object_type_choices
         )
         page_size = forms.IntegerField(
             required=False,
@@ -230,12 +231,16 @@ class ObjectListWidget(DashboardWidget):
                 try:
                     urlencode(data)
                 except (TypeError, ValueError):
-                    raise forms.ValidationError("Invalid format. URL parameters must be passed as a dictionary.")
+                    raise forms.ValidationError(_("Invalid format. URL parameters must be passed as a dictionary."))
             return data
 
     def render(self, request):
         app_label, model_name = self.config['model'].split('.')
-        model = ContentType.objects.get_by_natural_key(app_label, model_name).model_class()
+        model = ObjectType.objects.get_by_natural_key(app_label, model_name).model_class()
+        if not model:
+            logger.debug(f"Dashboard Widget model_class not found: {app_label}:{model_name}")
+            return
+
         viewname = get_viewname(model, action='list')
 
         # Evaluate user's permission. Note that this controls only whether the HTMX element is
@@ -250,6 +255,7 @@ class ObjectListWidget(DashboardWidget):
         parameters = self.config.get('url_params') or {}
         if page_size := self.config.get('page_size'):
             parameters['per_page'] = page_size
+        parameters['embedded'] = True
 
         if parameters:
             try:
@@ -313,7 +319,7 @@ class RSSFeedWidget(DashboardWidget):
         try:
             response = requests.get(
                 url=self.config['feed_url'],
-                headers={'User-Agent': f'NetBox/{settings.VERSION}'},
+                headers={'User-Agent': f'NetBox/{settings.RELEASE.version}'},
                 proxies=settings.HTTP_PROXIES,
                 timeout=3
             )
@@ -348,8 +354,7 @@ class BookmarksWidget(DashboardWidget):
 
     class ConfigForm(WidgetConfigForm):
         object_types = forms.MultipleChoiceField(
-            # TODO: Restrict the choices by FeatureQuery('bookmarks')
-            choices=get_content_type_labels,
+            choices=get_bookmarks_object_type_choices,
             required=False
         )
         order_by = forms.ChoiceField(
@@ -366,11 +371,17 @@ class BookmarksWidget(DashboardWidget):
         if request.user.is_anonymous:
             bookmarks = list()
         else:
-            bookmarks = Bookmark.objects.filter(user=request.user).order_by(self.config['order_by'])
+            bookmarks = Bookmark.objects.filter(user=request.user)
             if object_types := self.config.get('object_types'):
                 models = get_models_from_content_types(object_types)
-                conent_types = ContentType.objects.get_for_models(*models).values()
-                bookmarks = bookmarks.filter(object_type__in=conent_types)
+                content_types = ObjectType.objects.get_for_models(*models).values()
+                bookmarks = bookmarks.filter(object_type__in=content_types)
+            if self.config['order_by'] == BookmarkOrderingChoices.ORDERING_ALPHABETICAL_AZ:
+                bookmarks = sorted(bookmarks, key=lambda bookmark: bookmark.__str__().lower())
+            elif self.config['order_by'] == BookmarkOrderingChoices.ORDERING_ALPHABETICAL_ZA:
+                bookmarks = sorted(bookmarks, key=lambda bookmark: bookmark.__str__().lower(), reverse=True)
+            else:
+                bookmarks = bookmarks.order_by(self.config['order_by'])
             if max_items := self.config.get('max_items'):
                 bookmarks = bookmarks[:max_items]
 

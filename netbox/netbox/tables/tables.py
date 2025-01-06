@@ -1,20 +1,29 @@
+from copy import deepcopy
+from functools import cached_property
+
 import django_tables2 as tables
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models.fields.related import RelatedField
+from django.db.models.fields.reverse_related import ManyToOneRel
 from django.urls import reverse
 from django.urls.exceptions import NoReverseMatch
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 from django_tables2.data import TableQuerysetData
 
+from core.models import ObjectType
+from extras.choices import *
 from extras.models import CustomField, CustomLink
-from extras.choices import CustomFieldVisibilityChoices
+from netbox.constants import EMPTY_TABLE_TEXT
+from netbox.registry import registry
 from netbox.tables import columns
 from utilities.paginator import EnhancedPaginator, get_paginate_count
-from utilities.utils import get_viewname, highlight_string, title
+from utilities.html import highlight
+from utilities.string import title
+from utilities.views import get_viewname
+from .template_code import *
 
 __all__ = (
     'BaseTable',
@@ -46,7 +55,7 @@ class BaseTable(tables.Table):
 
         # Set default empty_text if none was provided
         if self.empty_text is None:
-            self.empty_text = f"No {self._meta.model._meta.verbose_name_plural} found"
+            self.empty_text = _("No {model_name} found").format(model_name=self._meta.model._meta.verbose_name_plural)
 
         # Determine the table columns to display by checking the following:
         #   1. User's configuration for the table
@@ -94,7 +103,7 @@ class BaseTable(tables.Table):
                             field = model._meta.get_field(field_name)
                         except FieldDoesNotExist:
                             break
-                        if isinstance(field, RelatedField):
+                        if isinstance(field, (RelatedField, ManyToOneRel)):
                             # Follow ForeignKeys to the related model
                             prefetch_path.append(field_name)
                             model = field.remote_field.model
@@ -119,7 +128,7 @@ class BaseTable(tables.Table):
 
     @property
     def available_columns(self):
-        return self._get_columns(visible=False)
+        return sorted(self._get_columns(visible=False))
 
     @property
     def selected_columns(self):
@@ -182,6 +191,7 @@ class NetBoxTable(BaseTable):
     actions = columns.ActionsColumn()
 
     exempt_columns = ('pk', 'actions')
+    embedded = False
 
     class Meta(BaseTable.Meta):
         pass
@@ -190,28 +200,33 @@ class NetBoxTable(BaseTable):
         if extra_columns is None:
             extra_columns = []
 
-        # Add custom field & custom link columns
-        content_type = ContentType.objects.get_for_model(self._meta.model)
-        custom_fields = CustomField.objects.filter(
-            content_types=content_type
-        ).exclude(ui_visibility=CustomFieldVisibilityChoices.VISIBILITY_HIDDEN)
+        if registered_columns := registry['tables'].get(self.__class__):
+            extra_columns.extend([
+                # Create a copy to avoid modifying the original Column
+                (name, deepcopy(column)) for name, column in registered_columns.items()
+            ])
 
+        # Add custom field & custom link columns
+        object_type = ObjectType.objects.get_for_model(self._meta.model)
+        custom_fields = CustomField.objects.filter(
+            object_types=object_type
+        ).exclude(ui_visible=CustomFieldUIVisibleChoices.HIDDEN)
         extra_columns.extend([
             (f'cf_{cf.name}', columns.CustomFieldColumn(cf)) for cf in custom_fields
         ])
-        custom_links = CustomLink.objects.filter(content_types=content_type, enabled=True)
+        custom_links = CustomLink.objects.filter(object_types=object_type, enabled=True)
         extra_columns.extend([
             (f'cl_{cl.name}', columns.CustomLinkColumn(cl)) for cl in custom_links
         ])
 
         super().__init__(*args, extra_columns=extra_columns, **kwargs)
 
-    @property
+    @cached_property
     def htmx_url(self):
         """
         Return the base HTML request URL for embedded tables.
         """
-        if getattr(self, 'embedded', False):
+        if self.embedded:
             viewname = get_viewname(self._meta.model, action='list')
             try:
                 return reverse(viewname)
@@ -236,6 +251,10 @@ class SearchTable(tables.Table):
     value = tables.Column(
         verbose_name=_('Value'),
     )
+    attrs = columns.TemplateColumn(
+        template_code=SEARCH_RESULT_ATTRS,
+        verbose_name=_('Attributes')
+    )
 
     trim_length = 30
 
@@ -243,21 +262,23 @@ class SearchTable(tables.Table):
         attrs = {
             'class': 'table table-hover object-list',
         }
-        empty_text = _('No results found')
+        empty_text = _(EMPTY_TABLE_TEXT)
 
     def __init__(self, data, highlight=None, **kwargs):
         self.highlight = highlight
         super().__init__(data, **kwargs)
 
     def render_field(self, value, record):
-        if hasattr(record.object, value):
-            return title(record.object._meta.get_field(value).verbose_name)
-        return value
+        try:
+            model_field = record.object._meta.get_field(value)
+            return title(model_field.verbose_name)
+        except FieldDoesNotExist:
+            return value
 
     def render_value(self, value):
         if not self.highlight:
             return value
 
-        value = highlight_string(value, self.highlight, trim_pre=self.trim_length, trim_post=self.trim_length)
+        value = highlight(value, self.highlight, trim_pre=self.trim_length, trim_post=self.trim_length)
 
         return mark_safe(value)

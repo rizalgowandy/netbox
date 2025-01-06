@@ -3,22 +3,22 @@ from collections import defaultdict
 from functools import cached_property
 
 from django.contrib.contenttypes.fields import GenericRelation
-from django.contrib.contenttypes.models import ContentType
 from django.core.validators import ValidationError
 from django.db import models
-from django.db.models.signals import class_prepared
-from django.dispatch import receiver
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from taggit.managers import TaggableManager
 
-from core.choices import JobStatusChoices
-from extras.choices import CustomFieldVisibilityChoices, ObjectChangeActionChoices
-from extras.utils import is_taggable, register_features
+from core.choices import JobStatusChoices, ObjectChangeActionChoices
+from core.models import ObjectType
+from extras.choices import *
+from extras.constants import CUSTOMFIELD_EMPTY_VALUES
+from extras.utils import is_taggable
+from netbox.config import get_config
 from netbox.registry import registry
 from netbox.signals import post_clean
 from utilities.json import CustomFieldJSONEncoder
-from utilities.utils import serialize_object
+from utilities.serialization import serialize_object
 from utilities.views import register_model_view
 
 __all__ = (
@@ -29,13 +29,15 @@ __all__ = (
     'CustomFieldsMixin',
     'CustomLinksMixin',
     'CustomValidationMixin',
+    'EventRulesMixin',
     'ExportTemplatesMixin',
     'ImageAttachmentsMixin',
     'JobsMixin',
     'JournalingMixin',
+    'NotificationsMixin',
     'SyncedDataMixin',
     'TagsMixin',
-    'WebhooksMixin',
+    'register_models',
 )
 
 
@@ -63,19 +65,26 @@ class ChangeLoggingMixin(models.Model):
     class Meta:
         abstract = True
 
-    def serialize_object(self):
+    def serialize_object(self, exclude=None):
         """
         Return a JSON representation of the instance. Models can override this method to replace or extend the default
         serialization logic provided by the `serialize_object()` utility function.
+
+        Args:
+            exclude: An iterable of attribute names to omit from the serialized output
         """
-        return serialize_object(self)
+        return serialize_object(self, exclude=exclude or [])
 
     def snapshot(self):
         """
         Save a snapshot of the object's current state in preparation for modification. The snapshot is saved as
         `_prechange_snapshot` on the instance.
         """
-        self._prechange_snapshot = self.serialize_object()
+        exclude_fields = []
+        if get_config().CHANGELOG_SKIP_EMPTY_CHANGES:
+            exclude_fields = ['last_updated',]
+
+        self._prechange_snapshot = self.serialize_object(exclude=exclude_fields)
     snapshot.alters_data = True
 
     def to_objectchange(self, action):
@@ -83,7 +92,13 @@ class ChangeLoggingMixin(models.Model):
         Return a new ObjectChange representing a change made to this object. This will typically be called automatically
         by ChangeLoggingMiddleware.
         """
-        from extras.models import ObjectChange
+        # TODO: Fix circular import
+        from core.models import ObjectChange
+
+        exclude = []
+        if get_config().CHANGELOG_SKIP_EMPTY_CHANGES:
+            exclude = ['last_updated']
+
         objectchange = ObjectChange(
             changed_object=self,
             object_repr=str(self)[:200],
@@ -92,7 +107,7 @@ class ChangeLoggingMixin(models.Model):
         if hasattr(self, '_prechange_snapshot'):
             objectchange.prechange_data = self._prechange_snapshot
         if action in (ObjectChangeActionChoices.ACTION_CREATE, ObjectChangeActionChoices.ACTION_UPDATE):
-            objectchange.postchange_data = self.serialize_object()
+            objectchange.postchange_data = self.serialize_object(exclude=exclude)
 
         return objectchange
 
@@ -205,12 +220,11 @@ class CustomFieldsMixin(models.Model):
         for field in CustomField.objects.get_for_model(self):
             value = self.custom_field_data.get(field.name)
 
-            # Skip fields that are hidden if 'omit_hidden' is set
-            if omit_hidden:
-                if field.ui_visibility == CustomFieldVisibilityChoices.VISIBILITY_HIDDEN:
-                    continue
-                if field.ui_visibility == CustomFieldVisibilityChoices.VISIBILITY_HIDDEN_IFUNSET and not value:
-                    continue
+            # Skip hidden fields if 'omit_hidden' is True
+            if omit_hidden and field.ui_visible == CustomFieldUIVisibleChoices.HIDDEN:
+                continue
+            elif omit_hidden and field.ui_visible == CustomFieldUIVisibleChoices.IF_SET and not value:
+                continue
 
             data[field] = field.deserialize(value)
 
@@ -232,12 +246,12 @@ class CustomFieldsMixin(models.Model):
         from extras.models import CustomField
         groups = defaultdict(dict)
         visible_custom_fields = CustomField.objects.get_for_model(self).exclude(
-            ui_visibility=CustomFieldVisibilityChoices.VISIBILITY_HIDDEN
+            ui_visible=CustomFieldUIVisibleChoices.HIDDEN
         )
 
         for cf in visible_custom_fields:
             value = self.custom_field_data.get(cf.name)
-            if value in (None, []) and cf.ui_visibility == CustomFieldVisibilityChoices.VISIBILITY_HIDDEN_IFUNSET:
+            if value in CUSTOMFIELD_EMPTY_VALUES and cf.ui_visible == CustomFieldUIVisibleChoices.IF_SET:
                 continue
             value = cf.deserialize(value)
             groups[cf.group_name][cf] = value
@@ -263,16 +277,29 @@ class CustomFieldsMixin(models.Model):
         # Validate all field values
         for field_name, value in self.custom_field_data.items():
             if field_name not in custom_fields:
-                raise ValidationError(f"Unknown field name '{field_name}' in custom field data.")
+                raise ValidationError(_("Unknown field name '{name}' in custom field data.").format(
+                    name=field_name
+                ))
             try:
                 custom_fields[field_name].validate(value)
             except ValidationError as e:
-                raise ValidationError(f"Invalid value for custom field '{field_name}': {e.message}")
+                raise ValidationError(_("Invalid value for custom field '{name}': {error}").format(
+                    name=field_name, error=e.message
+                ))
+
+            # Validate uniqueness if enforced
+            if custom_fields[field_name].unique and value not in CUSTOMFIELD_EMPTY_VALUES:
+                if self._meta.model.objects.exclude(pk=self.pk).filter(**{
+                    f'custom_field_data__{field_name}': value
+                }).exists():
+                    raise ValidationError(_("Custom field '{name}' must have a unique value.").format(
+                        name=field_name
+                    ))
 
         # Check for missing required values
         for cf in custom_fields.values():
             if cf.required and cf.name not in self.custom_field_data:
-                raise ValidationError(f"Missing required custom field '{cf.name}'.")
+                raise ValidationError(_("Missing required custom field '{name}'.").format(name=cf.name))
 
 
 class CustomLinksMixin(models.Model):
@@ -314,7 +341,9 @@ class ImageAttachmentsMixin(models.Model):
     Enables the assignments of ImageAttachments.
     """
     images = GenericRelation(
-        to='extras.ImageAttachment'
+        to='extras.ImageAttachment',
+        content_type_field='object_type',
+        object_id_field='object_id'
     )
 
     class Meta:
@@ -326,7 +355,9 @@ class ContactsMixin(models.Model):
     Enables the assignments of Contacts (via ContactAssignment).
     """
     contacts = GenericRelation(
-        to='tenancy.ContactAssignment'
+        to='tenancy.ContactAssignment',
+        content_type_field='object_type',
+        object_id_field='object_id'
     )
 
     class Meta:
@@ -339,6 +370,20 @@ class BookmarksMixin(models.Model):
     """
     bookmarks = GenericRelation(
         to='extras.Bookmark',
+        content_type_field='object_type',
+        object_id_field='object_id'
+    )
+
+    class Meta:
+        abstract = True
+
+
+class NotificationsMixin(models.Model):
+    """
+    Enables support for user notifications.
+    """
+    subscriptions = GenericRelation(
+        to='extras.Subscription',
         content_type_field='object_type',
         object_id_field='object_id'
     )
@@ -363,14 +408,9 @@ class JobsMixin(models.Model):
 
     def get_latest_jobs(self):
         """
-        Return a dictionary mapping of the most recent jobs for this instance.
+        Return a list of the most recent jobs for this instance.
         """
-        return {
-            job.name: job
-            for job in self.jobs.filter(
-                status__in=JobStatusChoices.TERMINAL_STATE_CHOICES
-            ).order_by('name', '-created').distinct('name').defer('data')
-        }
+        return self.jobs.filter(status__in=JobStatusChoices.TERMINAL_STATE_CHOICES).order_by('-created').defer('data')
 
 
 class JournalingMixin(models.Model):
@@ -401,9 +441,9 @@ class TagsMixin(models.Model):
         abstract = True
 
 
-class WebhooksMixin(models.Model):
+class EventRulesMixin(models.Model):
     """
-    Enables support for webhooks.
+    Enables support for event rules, which can be used to transmit webhooks or execute scripts automatically.
     """
     class Meta:
         abstract = True
@@ -475,17 +515,17 @@ class SyncedDataMixin(models.Model):
         ret = super().save(*args, **kwargs)
 
         # Create/delete AutoSyncRecord as needed
-        content_type = ContentType.objects.get_for_model(self)
+        object_type = ObjectType.objects.get_for_model(self)
         if self.auto_sync_enabled:
-            AutoSyncRecord.objects.get_or_create(
-                datafile=self.data_file,
-                object_type=content_type,
-                object_id=self.pk
+            AutoSyncRecord.objects.update_or_create(
+                object_type=object_type,
+                object_id=self.pk,
+                defaults={'datafile': self.data_file}
             )
         else:
             AutoSyncRecord.objects.filter(
                 datafile=self.data_file,
-                object_type=content_type,
+                object_type=object_type,
                 object_id=self.pk
             ).delete()
 
@@ -495,10 +535,10 @@ class SyncedDataMixin(models.Model):
         from core.models import AutoSyncRecord
 
         # Delete AutoSyncRecord
-        content_type = ContentType.objects.get_for_model(self)
+        object_type = ObjectType.objects.get_for_model(self)
         AutoSyncRecord.objects.filter(
             datafile=self.data_file,
-            object_type=content_type,
+            object_type=object_type,
             object_id=self.pk
         ).delete()
 
@@ -535,7 +575,9 @@ class SyncedDataMixin(models.Model):
         Inheriting models must override this method with specific logic to copy data from the assigned DataFile
         to the local instance. This method should *NOT* call save() on the instance.
         """
-        raise NotImplementedError(f"{self.__class__} must implement a sync_data() method.")
+        raise NotImplementedError(_("{class_name} must implement a sync_data() method.").format(
+            class_name=self.__class__
+        ))
 
 
 #
@@ -550,13 +592,14 @@ FEATURES_MAP = {
     'custom_fields': CustomFieldsMixin,
     'custom_links': CustomLinksMixin,
     'custom_validation': CustomValidationMixin,
+    'event_rules': EventRulesMixin,
     'export_templates': ExportTemplatesMixin,
     'image_attachments': ImageAttachmentsMixin,
     'jobs': JobsMixin,
     'journaling': JournalingMixin,
+    'notifications': NotificationsMixin,
     'synced_data': SyncedDataMixin,
     'tags': TagsMixin,
-    'webhooks': WebhooksMixin,
 }
 
 registry['model_features'].update({
@@ -564,36 +607,49 @@ registry['model_features'].update({
 })
 
 
-@receiver(class_prepared)
-def _register_features(sender, **kwargs):
-    # Record each applicable feature for the model in the registry
-    features = {
-        feature for feature, cls in FEATURES_MAP.items() if issubclass(sender, cls)
-    }
-    register_features(sender, features)
+def register_models(*models):
+    """
+    Register one or more models in NetBox. This entails:
 
-    # Register applicable feature views for the model
-    if issubclass(sender, JournalingMixin):
-        register_model_view(
-            sender,
-            'journal',
-            kwargs={'model': sender}
-        )('netbox.views.generic.ObjectJournalView')
-    if issubclass(sender, ChangeLoggingMixin):
-        register_model_view(
-            sender,
-            'changelog',
-            kwargs={'model': sender}
-        )('netbox.views.generic.ObjectChangeLogView')
-    if issubclass(sender, JobsMixin):
-        register_model_view(
-            sender,
-            'jobs',
-            kwargs={'model': sender}
-        )('netbox.views.generic.ObjectJobsView')
-    if issubclass(sender, SyncedDataMixin):
-        register_model_view(
-            sender,
-            'sync',
-            kwargs={'model': sender}
-        )('netbox.views.generic.ObjectSyncDataView')
+     - Determining whether the model is considered "public" (available for reference by other models)
+     - Registering which features the model supports (e.g. bookmarks, custom fields, etc.)
+     - Registering any feature-specific views for the model (e.g. ObjectJournalView instances)
+
+    register_model() should be called for each relevant model under the ready() of an app's AppConfig class.
+    """
+    for model in models:
+        app_label, model_name = model._meta.label_lower.split('.')
+
+        # Register public models
+        if not getattr(model, '_netbox_private', False):
+            registry['models'][app_label].add(model_name)
+
+        # Record each applicable feature for the model in the registry
+        features = {
+            feature for feature, cls in FEATURES_MAP.items() if issubclass(model, cls)
+        }
+        for feature in features:
+            try:
+                registry['model_features'][feature][app_label].add(model_name)
+            except KeyError:
+                raise KeyError(
+                    f"{feature} is not a valid model feature! Valid keys are: {registry['model_features'].keys()}"
+                )
+
+        # Register applicable feature views for the model
+        if issubclass(model, JournalingMixin):
+            register_model_view(model, 'journal', kwargs={'model': model})(
+                'netbox.views.generic.ObjectJournalView'
+            )
+        if issubclass(model, ChangeLoggingMixin):
+            register_model_view(model, 'changelog', kwargs={'model': model})(
+                'netbox.views.generic.ObjectChangeLogView'
+            )
+        if issubclass(model, JobsMixin):
+            register_model_view(model, 'jobs', kwargs={'model': model})(
+                'netbox.views.generic.ObjectJobsView'
+            )
+        if issubclass(model, SyncedDataMixin):
+            register_model_view(model, 'sync', kwargs={'model': model})(
+                'netbox.views.generic.ObjectSyncDataView'
+            )

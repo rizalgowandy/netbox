@@ -1,15 +1,10 @@
 from django.contrib.contenttypes.models import ContentType
 from django.shortcuts import get_object_or_404
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
-from circuits.models import Circuit
-from dcim.models import Cable, Device, Location, PowerFeed, Rack, RackReservation, Site, VirtualDeviceContext
-from ipam.models import Aggregate, ASN, IPAddress, IPRange, L2VPN, Prefix, VLAN, VRF
 from netbox.views import generic
-from utilities.utils import count_related
-from utilities.views import register_model_view, ViewTab
-from virtualization.models import VirtualMachine, Cluster
-from wireless.models import WirelessLAN, WirelessLink
+from utilities.query import count_related
+from utilities.views import GetRelatedModelsMixin, ViewTab, register_model_view
 from . import filtersets, forms, tables
 from .models import *
 
@@ -18,6 +13,7 @@ class ObjectContactsView(generic.ObjectChildrenView):
     child_model = ContactAssignment
     table = tables.ContactAssignmentTable
     filterset = filtersets.ContactAssignmentFilterSet
+    filterset_form = forms.ContactAssignmentFilterForm
     template_name = 'tenancy/object_contacts.html'
     tab = ViewTab(
         label=_('Contacts'),
@@ -28,15 +24,15 @@ class ObjectContactsView(generic.ObjectChildrenView):
 
     def get_children(self, request, parent):
         return ContactAssignment.objects.restrict(request.user, 'view').filter(
-            content_type=ContentType.objects.get_for_model(parent),
+            object_type=ContentType.objects.get_for_model(parent),
             object_id=parent.pk
-        )
+        ).order_by('priority', 'contact', 'role')
 
     def get_table(self, *args, **kwargs):
         table = super().get_table(*args, **kwargs)
 
         # Hide object columns
-        table.columns.hide('content_type')
+        table.columns.hide('object_type')
         table.columns.hide('object')
 
         return table
@@ -60,17 +56,14 @@ class TenantGroupListView(generic.ObjectListView):
 
 
 @register_model_view(TenantGroup)
-class TenantGroupView(generic.ObjectView):
+class TenantGroupView(GetRelatedModelsMixin, generic.ObjectView):
     queryset = TenantGroup.objects.all()
 
     def get_extra_context(self, request, instance):
         groups = instance.get_descendants(include_self=True)
-        related_models = (
-            (Tenant.objects.restrict(request.user, 'view').filter(group__in=groups), 'group_id'),
-        )
 
         return {
-            'related_models': related_models,
+            'related_models': self.get_related_models(request, groups),
         }
 
 
@@ -127,41 +120,12 @@ class TenantListView(generic.ObjectListView):
 
 
 @register_model_view(Tenant)
-class TenantView(generic.ObjectView):
+class TenantView(GetRelatedModelsMixin, generic.ObjectView):
     queryset = Tenant.objects.all()
 
     def get_extra_context(self, request, instance):
-        related_models = [
-            # DCIM
-            (Site.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Rack.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (RackReservation.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Location.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Device.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (VirtualDeviceContext.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Cable.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (PowerFeed.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # IPAM
-            (VRF.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Aggregate.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Prefix.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (IPRange.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (IPAddress.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (ASN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (VLAN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (L2VPN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Circuits
-            (Circuit.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Virtualization
-            (VirtualMachine.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (Cluster.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            # Wireless
-            (WirelessLAN.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-            (WirelessLink.objects.restrict(request.user, 'view').filter(tenant=instance), 'tenant_id'),
-        ]
-
         return {
-            'related_models': related_models,
+            'related_models': self.get_related_models(request, instance),
         }
 
 
@@ -217,17 +181,14 @@ class ContactGroupListView(generic.ObjectListView):
 
 
 @register_model_view(ContactGroup)
-class ContactGroupView(generic.ObjectView):
+class ContactGroupView(GetRelatedModelsMixin, generic.ObjectView):
     queryset = ContactGroup.objects.all()
 
     def get_extra_context(self, request, instance):
         groups = instance.get_descendants(include_self=True)
-        related_models = (
-            (Contact.objects.restrict(request.user, 'view').filter(group__in=groups), 'group_id'),
-        )
 
         return {
-            'related_models': related_models,
+            'related_models': self.get_related_models(request, groups),
         }
 
 
@@ -284,16 +245,12 @@ class ContactRoleListView(generic.ObjectListView):
 
 
 @register_model_view(ContactRole)
-class ContactRoleView(generic.ObjectView):
+class ContactRoleView(GetRelatedModelsMixin, generic.ObjectView):
     queryset = ContactRole.objects.all()
 
     def get_extra_context(self, request, instance):
-        related_models = (
-            (ContactAssignment.objects.restrict(request.user, 'view').filter(role=instance), 'role_id'),
-        )
-
         return {
-            'related_models': related_models,
+            'related_models': self.get_related_models(request, instance),
         }
 
 
@@ -386,25 +343,29 @@ class ContactAssignmentListView(generic.ObjectListView):
     filterset = filtersets.ContactAssignmentFilterSet
     filterset_form = forms.ContactAssignmentFilterForm
     table = tables.ContactAssignmentTable
-    actions = ('export', 'bulk_edit', 'bulk_delete')
+    actions = {
+        'import': {'add'},
+        'export': {'view'},
+        'bulk_edit': {'change'},
+        'bulk_delete': {'delete'},
+    }
 
 
 @register_model_view(ContactAssignment, 'edit')
 class ContactAssignmentEditView(generic.ObjectEditView):
     queryset = ContactAssignment.objects.all()
     form = forms.ContactAssignmentForm
-    template_name = 'tenancy/contactassignment_edit.html'
 
     def alter_object(self, instance, request, args, kwargs):
         if not instance.pk:
             # Assign the object based on URL kwargs
-            content_type = get_object_or_404(ContentType, pk=request.GET.get('content_type'))
-            instance.object = get_object_or_404(content_type.model_class(), pk=request.GET.get('object_id'))
+            object_type = get_object_or_404(ContentType, pk=request.GET.get('object_type'))
+            instance.object = get_object_or_404(object_type.model_class(), pk=request.GET.get('object_id'))
         return instance
 
     def get_extra_addanother_params(self, request):
         return {
-            'content_type': request.GET.get('content_type'),
+            'object_type': request.GET.get('object_type'),
             'object_id': request.GET.get('object_id'),
         }
 

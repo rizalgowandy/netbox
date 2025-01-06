@@ -1,6 +1,5 @@
-from django.utils.translation import gettext_lazy as _
 import django_tables2 as tables
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
 from dcim import models
 from netbox.tables import NetBoxTable, columns
@@ -86,7 +85,8 @@ class DeviceTypeTable(NetBoxTable):
         linkify=True
     )
     is_full_depth = columns.BooleanColumn(
-        verbose_name=_('Full Depth')
+        verbose_name=_('Full Depth'),
+        false_mark=None
     )
     comments = columns.MarkdownColumn(
         verbose_name=_('Comments'),
@@ -97,6 +97,10 @@ class DeviceTypeTable(NetBoxTable):
     u_height = columns.TemplateColumn(
         verbose_name=_('U Height'),
         template_code='{{ value|floatformat }}'
+    )
+    exclude_from_utilization = columns.BooleanColumn(
+        verbose_name=_('Exclude from utilization'),
+        false_mark=None
     )
     weight = columns.TemplateColumn(
         verbose_name=_('Weight'),
@@ -142,9 +146,9 @@ class DeviceTypeTable(NetBoxTable):
     class Meta(NetBoxTable.Meta):
         model = models.DeviceType
         fields = (
-            'pk', 'id', 'model', 'manufacturer', 'default_platform', 'slug', 'part_number', 'u_height', 'is_full_depth',
-            'subdevice_role', 'airflow', 'weight', 'description', 'comments', 'instance_count', 'tags', 'created',
-            'last_updated',
+            'pk', 'id', 'model', 'manufacturer', 'default_platform', 'slug', 'part_number', 'u_height',
+            'exclude_from_utilization', 'is_full_depth', 'subdevice_role', 'airflow', 'weight',
+            'description', 'comments', 'instance_count', 'tags', 'created', 'last_updated',
         )
         default_columns = (
             'pk', 'model', 'manufacturer', 'part_number', 'u_height', 'is_full_depth', 'instance_count',
@@ -220,7 +224,8 @@ class InterfaceTemplateTable(ComponentTemplateTable):
         verbose_name=_('Enabled'),
     )
     mgmt_only = columns.BooleanColumn(
-        verbose_name=_('Management Only')
+        verbose_name=_('Management Only'),
+        false_mark=None
     )
     actions = columns.ActionsColumn(
         actions=('edit', 'delete'),

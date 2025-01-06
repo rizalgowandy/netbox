@@ -1,6 +1,5 @@
 from django import forms
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from timezone_field import TimeZoneFormField
 
@@ -11,11 +10,14 @@ from extras.models import ConfigTemplate
 from ipam.models import ASN, VLAN, VLANGroup, VRF
 from netbox.forms import NetBoxModelBulkEditForm
 from tenancy.models import Tenant
+from users.models import User
 from utilities.forms import BulkEditForm, add_blank_choice, form_from_model
 from utilities.forms.fields import ColorField, CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField
+from utilities.forms.rendering import FieldSet, InlineFields, TabbedGroups
 from utilities.forms.widgets import BulkEditNullBooleanSelect, NumberWithOptions
-from wireless.models import WirelessLAN, WirelessLANGroup
+from virtualization.models import Cluster
 from wireless.choices import WirelessRoleChoices
+from wireless.models import WirelessLAN, WirelessLANGroup
 
 __all__ = (
     'CableBulkEditForm',
@@ -51,6 +53,7 @@ __all__ = (
     'RackBulkEditForm',
     'RackReservationBulkEditForm',
     'RackRoleBulkEditForm',
+    'RackTypeBulkEditForm',
     'RearPortBulkEditForm',
     'RearPortTemplateBulkEditForm',
     'RegionBulkEditForm',
@@ -75,7 +78,7 @@ class RegionBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Region
     fieldsets = (
-        (None, ('parent', 'description')),
+        FieldSet('parent', 'description'),
     )
     nullable_fields = ('parent', 'description')
 
@@ -94,7 +97,7 @@ class SiteGroupBulkEditForm(NetBoxModelBulkEditForm):
 
     model = SiteGroup
     fieldsets = (
-        (None, ('parent', 'description')),
+        FieldSet('parent', 'description'),
     )
     nullable_fields = ('parent', 'description')
 
@@ -154,7 +157,7 @@ class SiteBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Site
     fieldsets = (
-        (None, ('status', 'region', 'group', 'tenant', 'asns', 'time_zone', 'description')),
+        FieldSet('status', 'region', 'group', 'tenant', 'asns', 'time_zone', 'description'),
     )
     nullable_fields = (
         'region', 'group', 'tenant', 'asns', 'time_zone', 'description', 'comments',
@@ -194,7 +197,7 @@ class LocationBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Location
     fieldsets = (
-        (None, ('site', 'parent', 'status', 'tenant', 'description')),
+        FieldSet('site', 'parent', 'status', 'tenant', 'description'),
     )
     nullable_fields = ('parent', 'tenant', 'description')
 
@@ -212,9 +215,98 @@ class RackRoleBulkEditForm(NetBoxModelBulkEditForm):
 
     model = RackRole
     fieldsets = (
-        (None, ('color', 'description')),
+        FieldSet('color', 'description'),
     )
     nullable_fields = ('color', 'description')
+
+
+class RackTypeBulkEditForm(NetBoxModelBulkEditForm):
+    manufacturer = DynamicModelChoiceField(
+        label=_('Manufacturer'),
+        queryset=Manufacturer.objects.all(),
+        required=False
+    )
+    form_factor = forms.ChoiceField(
+        label=_('Form factor'),
+        choices=add_blank_choice(RackFormFactorChoices),
+        required=False
+    )
+    width = forms.ChoiceField(
+        label=_('Width'),
+        choices=add_blank_choice(RackWidthChoices),
+        required=False
+    )
+    u_height = forms.IntegerField(
+        required=False,
+        label=_('Height (U)')
+    )
+    starting_unit = forms.IntegerField(
+        required=False,
+        min_value=1
+    )
+    desc_units = forms.NullBooleanField(
+        required=False,
+        widget=BulkEditNullBooleanSelect,
+        label=_('Descending units')
+    )
+    outer_width = forms.IntegerField(
+        label=_('Outer width'),
+        required=False,
+        min_value=1
+    )
+    outer_depth = forms.IntegerField(
+        label=_('Outer depth'),
+        required=False,
+        min_value=1
+    )
+    outer_unit = forms.ChoiceField(
+        label=_('Outer unit'),
+        choices=add_blank_choice(RackDimensionUnitChoices),
+        required=False
+    )
+    mounting_depth = forms.IntegerField(
+        label=_('Mounting depth'),
+        required=False,
+        min_value=1
+    )
+    weight = forms.DecimalField(
+        label=_('Weight'),
+        min_value=0,
+        required=False
+    )
+    max_weight = forms.IntegerField(
+        label=_('Max weight'),
+        min_value=0,
+        required=False
+    )
+    weight_unit = forms.ChoiceField(
+        label=_('Weight unit'),
+        choices=add_blank_choice(WeightUnitChoices),
+        required=False,
+        initial=''
+    )
+    description = forms.CharField(
+        label=_('Description'),
+        max_length=200,
+        required=False
+    )
+    comments = CommentField()
+
+    model = RackType
+    fieldsets = (
+        FieldSet('manufacturer', 'description', 'form_factor', 'width', 'u_height', name=_('Rack Type')),
+        FieldSet(
+            InlineFields('outer_width', 'outer_depth', 'outer_unit', label=_('Outer Dimensions')),
+            InlineFields('weight', 'max_weight', 'weight_unit', label=_('Weight')),
+            'mounting_depth',
+            name=_('Dimensions')
+        ),
+        FieldSet('starting_unit', 'desc_units', name=_('Numbering')),
+    )
+    nullable_fields = (
+        'outer_width', 'outer_depth', 'outer_unit', 'weight',
+        'max_weight', 'weight_unit', 'description', 'comments',
+    )
 
 
 class RackBulkEditForm(NetBoxModelBulkEditForm):
@@ -267,6 +359,11 @@ class RackBulkEditForm(NetBoxModelBulkEditForm):
         queryset=RackRole.objects.all(),
         required=False
     )
+    rack_type = DynamicModelChoiceField(
+        label=_('Rack type'),
+        queryset=RackType.objects.all(),
+        required=False,
+    )
     serial = forms.CharField(
         max_length=50,
         required=False,
@@ -277,9 +374,9 @@ class RackBulkEditForm(NetBoxModelBulkEditForm):
         max_length=50,
         required=False
     )
-    type = forms.ChoiceField(
-        label=_('Type'),
-        choices=add_blank_choice(RackTypeChoices),
+    form_factor = forms.ChoiceField(
+        label=_('Form factor'),
+        choices=add_blank_choice(RackFormFactorChoices),
         required=False
     )
     width = forms.ChoiceField(
@@ -316,6 +413,11 @@ class RackBulkEditForm(NetBoxModelBulkEditForm):
         required=False,
         min_value=1
     )
+    airflow = forms.ChoiceField(
+        label=_('Airflow'),
+        choices=add_blank_choice(RackAirflowChoices),
+        required=False
+    )
     weight = forms.DecimalField(
         label=_('Weight'),
         min_value=0,
@@ -341,12 +443,13 @@ class RackBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Rack
     fieldsets = (
-        (_('Rack'), ('status', 'role', 'tenant', 'serial', 'asset_tag', 'description')),
-        (_('Location'), ('region', 'site_group', 'site', 'location')),
-        (_('Hardware'), (
-            'type', 'width', 'u_height', 'desc_units', 'outer_width', 'outer_depth', 'outer_unit', 'mounting_depth',
-        )),
-        (_('Weight'), ('weight', 'max_weight', 'weight_unit')),
+        FieldSet('status', 'role', 'tenant', 'serial', 'asset_tag', 'rack_type', 'description', name=_('Rack')),
+        FieldSet('region', 'site_group', 'site', 'location', name=_('Location')),
+        FieldSet(
+            'form_factor', 'width', 'u_height', 'desc_units', 'airflow', 'outer_width', 'outer_depth', 'outer_unit',
+            'mounting_depth', name=_('Hardware')
+        ),
+        FieldSet('weight', 'max_weight', 'weight_unit', name=_('Weight')),
     )
     nullable_fields = (
         'location', 'tenant', 'role', 'serial', 'asset_tag', 'outer_width', 'outer_depth', 'outer_unit', 'weight',
@@ -357,9 +460,7 @@ class RackBulkEditForm(NetBoxModelBulkEditForm):
 class RackReservationBulkEditForm(NetBoxModelBulkEditForm):
     user = forms.ModelChoiceField(
         label=_('User'),
-        queryset=get_user_model().objects.order_by(
-            'username'
-        ),
+        queryset=User.objects.order_by('username'),
         required=False
     )
     tenant = DynamicModelChoiceField(
@@ -376,7 +477,7 @@ class RackReservationBulkEditForm(NetBoxModelBulkEditForm):
 
     model = RackReservation
     fieldsets = (
-        (None, ('user', 'tenant', 'description')),
+        FieldSet('user', 'tenant', 'description'),
     )
     nullable_fields = ('comments',)
 
@@ -390,7 +491,7 @@ class ManufacturerBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Manufacturer
     fieldsets = (
-        (None, ('description',)),
+        FieldSet('description'),
     )
     nullable_fields = ('description',)
 
@@ -412,13 +513,18 @@ class DeviceTypeBulkEditForm(NetBoxModelBulkEditForm):
     )
     u_height = forms.IntegerField(
         label=_('U height'),
-        min_value=1,
+        min_value=0,
         required=False
     )
     is_full_depth = forms.NullBooleanField(
         required=False,
         widget=BulkEditNullBooleanSelect(),
         label=_('Is full depth')
+    )
+    exclude_from_utilization = forms.NullBooleanField(
+        required=False,
+        widget=BulkEditNullBooleanSelect(),
+        label=_('Exclude from utilization')
     )
     airflow = forms.ChoiceField(
         label=_('Airflow'),
@@ -445,8 +551,11 @@ class DeviceTypeBulkEditForm(NetBoxModelBulkEditForm):
 
     model = DeviceType
     fieldsets = (
-        (_('Device Type'), ('manufacturer', 'default_platform', 'part_number', 'u_height', 'is_full_depth', 'airflow', 'description')),
-        (_('Weight'), ('weight', 'weight_unit')),
+        FieldSet(
+            'manufacturer', 'default_platform', 'part_number', 'u_height', 'exclude_from_utilization', 'is_full_depth',
+            'airflow', 'description', name=_('Device Type')
+        ),
+        FieldSet('weight', 'weight_unit', name=_('Weight')),
     )
     nullable_fields = ('part_number', 'airflow', 'weight', 'weight_unit', 'description', 'comments')
 
@@ -459,6 +568,11 @@ class ModuleTypeBulkEditForm(NetBoxModelBulkEditForm):
     )
     part_number = forms.CharField(
         label=_('Part number'),
+        required=False
+    )
+    airflow = forms.ChoiceField(
+        label=_('Airflow'),
+        choices=add_blank_choice(ModuleAirflowChoices),
         required=False
     )
     weight = forms.DecimalField(
@@ -481,8 +595,12 @@ class ModuleTypeBulkEditForm(NetBoxModelBulkEditForm):
 
     model = ModuleType
     fieldsets = (
-        (_('Module Type'), ('manufacturer', 'part_number', 'description')),
-        (_('Weight'), ('weight', 'weight_unit')),
+        FieldSet('manufacturer', 'part_number', 'description', name=_('Module Type')),
+        FieldSet(
+            'airflow',
+            InlineFields('weight', 'max_weight', 'weight_unit', label=_('Weight')),
+            name=_('Chassis')
+        ),
     )
     nullable_fields = ('part_number', 'weight', 'weight_unit', 'description', 'comments')
 
@@ -510,7 +628,7 @@ class DeviceRoleBulkEditForm(NetBoxModelBulkEditForm):
 
     model = DeviceRole
     fieldsets = (
-        (None, ('color', 'vm_role', 'config_template', 'description')),
+        FieldSet('color', 'vm_role', 'config_template', 'description'),
     )
     nullable_fields = ('color', 'config_template', 'description')
 
@@ -534,7 +652,7 @@ class PlatformBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Platform
     fieldsets = (
-        (None, ('manufacturer', 'config_template', 'description')),
+        FieldSet('manufacturer', 'config_template', 'description'),
     )
     nullable_fields = ('manufacturer', 'config_template', 'description')
 
@@ -549,6 +667,9 @@ class DeviceBulkEditForm(NetBoxModelBulkEditForm):
         label=_('Device type'),
         queryset=DeviceType.objects.all(),
         required=False,
+        context={
+            'parent': 'manufacturer',
+        },
         query_params={
             'manufacturer_id': '$manufacturer'
         }
@@ -606,17 +727,26 @@ class DeviceBulkEditForm(NetBoxModelBulkEditForm):
         queryset=ConfigTemplate.objects.all(),
         required=False
     )
+    cluster = DynamicModelChoiceField(
+        label=_('Cluster'),
+        queryset=Cluster.objects.all(),
+        required=False,
+        query_params={
+            'site_id': ['$site', 'null']
+        },
+    )
     comments = CommentField()
 
     model = Device
     fieldsets = (
-        (_('Device'), ('role', 'status', 'tenant', 'platform', 'description')),
-        (_('Location'), ('site', 'location')),
-        (_('Hardware'), ('manufacturer', 'device_type', 'airflow', 'serial')),
-        (_('Configuration'), ('config_template',)),
+        FieldSet('role', 'status', 'tenant', 'platform', 'description', name=_('Device')),
+        FieldSet('site', 'location', name=_('Location')),
+        FieldSet('manufacturer', 'device_type', 'airflow', 'serial', name=_('Hardware')),
+        FieldSet('config_template', name=_('Configuration')),
+        FieldSet('cluster', name=_('Virtualization')),
     )
     nullable_fields = (
-        'location', 'tenant', 'platform', 'serial', 'airflow', 'description', 'comments',
+        'location', 'tenant', 'platform', 'serial', 'airflow', 'description', 'cluster', 'comments',
     )
 
 
@@ -632,6 +762,9 @@ class ModuleBulkEditForm(NetBoxModelBulkEditForm):
         required=False,
         query_params={
             'manufacturer_id': '$manufacturer'
+        },
+        context={
+            'parent': 'manufacturer',
         }
     )
     status = forms.ChoiceField(
@@ -654,7 +787,7 @@ class ModuleBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Module
     fieldsets = (
-        (None, ('manufacturer', 'module_type', 'status', 'serial', 'description')),
+        FieldSet('manufacturer', 'module_type', 'status', 'serial', 'description'),
     )
     nullable_fields = ('serial', 'description', 'comments')
 
@@ -706,8 +839,8 @@ class CableBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Cable
     fieldsets = (
-        (None, ('type', 'status', 'tenant', 'label', 'description')),
-        (_('Attributes'), ('color', 'length', 'length_unit')),
+        FieldSet('type', 'status', 'tenant', 'label', 'description'),
+        FieldSet('color', 'length', 'length_unit', name=_('Attributes')),
     )
     nullable_fields = (
         'type', 'status', 'tenant', 'label', 'color', 'length', 'description', 'comments',
@@ -729,7 +862,7 @@ class VirtualChassisBulkEditForm(NetBoxModelBulkEditForm):
 
     model = VirtualChassis
     fieldsets = (
-        (None, ('domain', 'description')),
+        FieldSet('domain', 'description'),
     )
     nullable_fields = ('domain', 'description', 'comments')
 
@@ -777,7 +910,7 @@ class PowerPanelBulkEditForm(NetBoxModelBulkEditForm):
 
     model = PowerPanel
     fieldsets = (
-        (None, ('region', 'site_group', 'site', 'location', 'description')),
+        FieldSet('region', 'site_group', 'site', 'location', 'description'),
     )
     nullable_fields = ('location', 'description', 'comments')
 
@@ -847,8 +980,8 @@ class PowerFeedBulkEditForm(NetBoxModelBulkEditForm):
 
     model = PowerFeed
     fieldsets = (
-        (None, ('power_panel', 'rack', 'status', 'type', 'mark_connected', 'description', 'tenant')),
-        (_('Power'), ('supply', 'phase', 'voltage', 'amperage', 'max_utilization'))
+        FieldSet('power_panel', 'rack', 'status', 'type', 'mark_connected', 'description', 'tenant'),
+        FieldSet('supply', 'phase', 'voltage', 'amperage', 'max_utilization', name=_('Power'))
     )
     nullable_fields = ('location', 'tenant', 'description', 'comments')
 
@@ -1172,12 +1305,17 @@ class ComponentBulkEditForm(NetBoxModelBulkEditForm):
         required=False
     )
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, initial=None, **kwargs):
+        try:
+            self.device_id = int(initial.get('device'))
+        except (TypeError, ValueError):
+            self.device_id = None
+
+        super().__init__(*args, initial=initial, **kwargs)
 
         # Limit module queryset to Modules which belong to the parent Device
-        if 'device' in self.initial:
-            device = Device.objects.filter(pk=self.initial['device']).first()
+        if self.device_id:
+            device = Device.objects.filter(pk=self.device_id).first()
             self.fields['module'].queryset = Module.objects.filter(device=device)
         else:
             self.fields['module'].choices = ()
@@ -1185,8 +1323,8 @@ class ComponentBulkEditForm(NetBoxModelBulkEditForm):
 
 
 class ConsolePortBulkEditForm(
-    form_from_model(ConsolePort, ['label', 'type', 'speed', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(ConsolePort, ['label', 'type', 'speed', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1196,14 +1334,14 @@ class ConsolePortBulkEditForm(
 
     model = ConsolePort
     fieldsets = (
-        (None, ('module', 'type', 'label', 'speed', 'description', 'mark_connected')),
+        FieldSet('module', 'type', 'label', 'speed', 'description', 'mark_connected'),
     )
     nullable_fields = ('module', 'label', 'description')
 
 
 class ConsoleServerPortBulkEditForm(
-    form_from_model(ConsoleServerPort, ['label', 'type', 'speed', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(ConsoleServerPort, ['label', 'type', 'speed', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1213,14 +1351,14 @@ class ConsoleServerPortBulkEditForm(
 
     model = ConsoleServerPort
     fieldsets = (
-        (None, ('module', 'type', 'label', 'speed', 'description', 'mark_connected')),
+        FieldSet('module', 'type', 'label', 'speed', 'description', 'mark_connected'),
     )
     nullable_fields = ('module', 'label', 'description')
 
 
 class PowerPortBulkEditForm(
-    form_from_model(PowerPort, ['label', 'type', 'maximum_draw', 'allocated_draw', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(PowerPort, ['label', 'type', 'maximum_draw', 'allocated_draw', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1230,15 +1368,15 @@ class PowerPortBulkEditForm(
 
     model = PowerPort
     fieldsets = (
-        (None, ('module', 'type', 'label', 'description', 'mark_connected')),
-        (_('Power'), ('maximum_draw', 'allocated_draw')),
+        FieldSet('module', 'type', 'label', 'description', 'mark_connected'),
+        FieldSet('maximum_draw', 'allocated_draw', name=_('Power')),
     )
     nullable_fields = ('module', 'label', 'description', 'maximum_draw', 'allocated_draw')
 
 
 class PowerOutletBulkEditForm(
-    form_from_model(PowerOutlet, ['label', 'type', 'feed_leg', 'power_port', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(PowerOutlet, ['label', 'type', 'feed_leg', 'power_port', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1248,8 +1386,8 @@ class PowerOutletBulkEditForm(
 
     model = PowerOutlet
     fieldsets = (
-        (None, ('module', 'type', 'label', 'description', 'mark_connected')),
-        (_('Power'), ('feed_leg', 'power_port')),
+        FieldSet('module', 'type', 'label', 'description', 'mark_connected'),
+        FieldSet('feed_leg', 'power_port', name=_('Power')),
     )
     nullable_fields = ('module', 'label', 'type', 'feed_leg', 'power_port', 'description')
 
@@ -1257,8 +1395,8 @@ class PowerOutletBulkEditForm(
         super().__init__(*args, **kwargs)
 
         # Limit power_port queryset to PowerPorts which belong to the parent Device
-        if 'device' in self.initial:
-            device = Device.objects.filter(pk=self.initial['device']).first()
+        if self.device_id:
+            device = Device.objects.filter(pk=self.device_id).first()
             self.fields['power_port'].queryset = PowerPort.objects.filter(device=device)
         else:
             self.fields['power_port'].choices = ()
@@ -1266,12 +1404,12 @@ class PowerOutletBulkEditForm(
 
 
 class InterfaceBulkEditForm(
+    ComponentBulkEditForm,
     form_from_model(Interface, [
         'label', 'type', 'parent', 'bridge', 'lag', 'speed', 'duplex', 'mac_address', 'wwn', 'mtu', 'mgmt_only',
         'mark_connected', 'description', 'mode', 'rf_role', 'rf_channel', 'rf_channel_frequency', 'rf_channel_width',
         'tx_power', 'wireless_lans'
-    ]),
-    ComponentBulkEditForm
+    ])
 ):
     enabled = forms.NullBooleanField(
         label=_('Enabled'),
@@ -1281,18 +1419,25 @@ class InterfaceBulkEditForm(
     parent = DynamicModelChoiceField(
         label=_('Parent'),
         queryset=Interface.objects.all(),
-        required=False
+        required=False,
+        query_params={
+            'virtual_chassis_member_id': '$device',
+        }
     )
     bridge = DynamicModelChoiceField(
         label=_('Bridge'),
         queryset=Interface.objects.all(),
-        required=False
+        required=False,
+        query_params={
+            'virtual_chassis_member_id': '$device',
+        }
     )
     lag = DynamicModelChoiceField(
         queryset=Interface.objects.all(),
         required=False,
         query_params={
             'type': 'lag',
+            'virtual_chassis_member_id': '$device',
         },
         label=_('LAG')
     )
@@ -1349,6 +1494,7 @@ class InterfaceBulkEditForm(
         required=False,
         query_params={
             'group_id': '$vlan_group',
+            'available_on_device': '$device',
         },
         label=_('Untagged VLAN')
     )
@@ -1357,8 +1503,27 @@ class InterfaceBulkEditForm(
         required=False,
         query_params={
             'group_id': '$vlan_group',
+            'available_on_device': '$device',
         },
         label=_('Tagged VLANs')
+    )
+    add_tagged_vlans = DynamicModelMultipleChoiceField(
+        label=_('Add tagged VLANs'),
+        queryset=VLAN.objects.all(),
+        required=False,
+        query_params={
+            'group_id': '$vlan_group',
+            'available_on_device': '$device',
+        },
+    )
+    remove_tagged_vlans = DynamicModelMultipleChoiceField(
+        label=_('Remove tagged VLANs'),
+        queryset=VLAN.objects.all(),
+        required=False,
+        query_params={
+            'group_id': '$vlan_group',
+            'available_on_device': '$device',
+        }
     )
     vrf = DynamicModelChoiceField(
         queryset=VRF.objects.all(),
@@ -1381,37 +1546,32 @@ class InterfaceBulkEditForm(
 
     model = Interface
     fieldsets = (
-        (None, ('module', 'type', 'label', 'speed', 'duplex', 'description')),
-        (_('Addressing'), ('vrf', 'mac_address', 'wwn')),
-        (_('Operation'), ('vdcs', 'mtu', 'tx_power', 'enabled', 'mgmt_only', 'mark_connected')),
-        (_('PoE'), ('poe_mode', 'poe_type')),
-        (_('Related Interfaces'), ('parent', 'bridge', 'lag')),
-        (_('802.1Q Switching'), ('mode', 'vlan_group', 'untagged_vlan', 'tagged_vlans')),
-        (_('Wireless'), (
+        FieldSet('module', 'type', 'label', 'speed', 'duplex', 'description'),
+        FieldSet('vrf', 'mac_address', 'wwn', name=_('Addressing')),
+        FieldSet('vdcs', 'mtu', 'tx_power', 'enabled', 'mgmt_only', 'mark_connected', name=_('Operation')),
+        FieldSet('poe_mode', 'poe_type', name=_('PoE')),
+        FieldSet('parent', 'bridge', 'lag', name=_('Related Interfaces')),
+        FieldSet('mode', 'vlan_group', 'untagged_vlan', name=_('802.1Q Switching')),
+        FieldSet(
+            TabbedGroups(
+                FieldSet('tagged_vlans', name=_('Assignment')),
+                FieldSet('add_tagged_vlans', 'remove_tagged_vlans', name=_('Add/Remove')),
+            ),
+        ),
+        FieldSet(
             'rf_role', 'rf_channel', 'rf_channel_frequency', 'rf_channel_width', 'wireless_lan_group', 'wireless_lans',
-        )),
+            name=_('Wireless')
+        ),
     )
     nullable_fields = (
-        'module', 'label', 'parent', 'bridge', 'lag', 'speed', 'duplex', 'mac_address', 'wwn', 'vdcs', 'mtu', 'description',
-        'poe_mode', 'poe_type', 'mode', 'rf_channel', 'rf_channel_frequency', 'rf_channel_width', 'tx_power', 'untagged_vlan',
-        'tagged_vlans', 'vrf', 'wireless_lans'
+        'module', 'label', 'parent', 'bridge', 'lag', 'speed', 'duplex', 'mac_address', 'wwn', 'vdcs', 'mtu',
+        'description', 'poe_mode', 'poe_type', 'mode', 'rf_channel', 'rf_channel_frequency', 'rf_channel_width',
+        'tx_power', 'untagged_vlan', 'tagged_vlans', 'vrf', 'wireless_lans'
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if 'device' in self.initial:
-            device = Device.objects.filter(pk=self.initial['device']).first()
-
-            # Restrict parent/bridge/LAG interface assignment by device
-            self.fields['parent'].widget.add_query_param('device_id', device.pk)
-            self.fields['bridge'].widget.add_query_param('device_id', device.pk)
-            self.fields['lag'].widget.add_query_param('device_id', device.pk)
-
-            # Limit VLAN choices by device
-            self.fields['untagged_vlan'].widget.add_query_param('available_on_device', device.pk)
-            self.fields['tagged_vlans'].widget.add_query_param('available_on_device', device.pk)
-
-        else:
+        if not self.device_id:
             # See #4523
             if 'pk' in self.initial:
                 site = None
@@ -1432,6 +1592,13 @@ class InterfaceBulkEditForm(
                         'site_id', [site.pk, settings.FILTERS_NULL_CHOICE_VALUE]
                     )
                     self.fields['tagged_vlans'].widget.add_query_param(
+                        'site_id', [site.pk, settings.FILTERS_NULL_CHOICE_VALUE]
+                    )
+
+                    self.fields['add_tagged_vlans'].widget.add_query_param(
+                        'site_id', [site.pk, settings.FILTERS_NULL_CHOICE_VALUE]
+                    )
+                    self.fields['remove_tagged_vlans'].widget.add_query_param(
                         'site_id', [site.pk, settings.FILTERS_NULL_CHOICE_VALUE]
                     )
 
@@ -1463,8 +1630,8 @@ class InterfaceBulkEditForm(
 
 
 class FrontPortBulkEditForm(
-    form_from_model(FrontPort, ['label', 'type', 'color', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(FrontPort, ['label', 'type', 'color', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1474,14 +1641,14 @@ class FrontPortBulkEditForm(
 
     model = FrontPort
     fieldsets = (
-        (None, ('module', 'type', 'label', 'color', 'description', 'mark_connected')),
+        FieldSet('module', 'type', 'label', 'color', 'description', 'mark_connected'),
     )
     nullable_fields = ('module', 'label', 'description', 'color')
 
 
 class RearPortBulkEditForm(
-    form_from_model(RearPort, ['label', 'type', 'color', 'mark_connected', 'description']),
-    ComponentBulkEditForm
+    ComponentBulkEditForm,
+    form_from_model(RearPort, ['label', 'type', 'color', 'mark_connected', 'description'])
 ):
     mark_connected = forms.NullBooleanField(
         label=_('Mark connected'),
@@ -1491,7 +1658,7 @@ class RearPortBulkEditForm(
 
     model = RearPort
     fieldsets = (
-        (None, ('module', 'type', 'label', 'color', 'description', 'mark_connected')),
+        FieldSet('module', 'type', 'label', 'color', 'description', 'mark_connected'),
     )
     nullable_fields = ('module', 'label', 'description', 'color')
 
@@ -1502,7 +1669,7 @@ class ModuleBayBulkEditForm(
 ):
     model = ModuleBay
     fieldsets = (
-        (None, ('label', 'position', 'description')),
+        FieldSet('label', 'position', 'description'),
     )
     nullable_fields = ('label', 'position', 'description')
 
@@ -1513,7 +1680,7 @@ class DeviceBayBulkEditForm(
 ):
     model = DeviceBay
     fieldsets = (
-        (None, ('label', 'description')),
+        FieldSet('label', 'description'),
     )
     nullable_fields = ('label', 'description')
 
@@ -1540,7 +1707,7 @@ class InventoryItemBulkEditForm(
 
     model = InventoryItem
     fieldsets = (
-        (None, ('device', 'label', 'role', 'manufacturer', 'part_id', 'description')),
+        FieldSet('device', 'label', 'role', 'manufacturer', 'part_id', 'description'),
     )
     nullable_fields = ('label', 'role', 'manufacturer', 'part_id', 'description')
 
@@ -1562,7 +1729,7 @@ class InventoryItemRoleBulkEditForm(NetBoxModelBulkEditForm):
 
     model = InventoryItemRole
     fieldsets = (
-        (None, ('color', 'description')),
+        FieldSet('color', 'description'),
     )
     nullable_fields = ('color', 'description')
 
@@ -1585,6 +1752,6 @@ class VirtualDeviceContextBulkEditForm(NetBoxModelBulkEditForm):
     )
     model = VirtualDeviceContext
     fieldsets = (
-        (None, ('device', 'status', 'tenant')),
+        FieldSet('device', 'status', 'tenant'),
     )
     nullable_fields = ('device', 'tenant', )

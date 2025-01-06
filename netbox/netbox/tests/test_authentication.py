@@ -1,23 +1,18 @@
 import datetime
 
 from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
-from django.contrib.contenttypes.models import ContentType
 from django.test import Client
 from django.test.utils import override_settings
 from django.urls import reverse
 from netaddr import IPNetwork
 from rest_framework.test import APIClient
 
+from core.models import ObjectType
 from dcim.models import Site
 from ipam.models import Prefix
-from users.models import ObjectPermission, Token
+from users.models import Group, ObjectPermission, Token, User
 from utilities.testing import TestCase
 from utilities.testing.api import APITestCase
-
-
-User = get_user_model()
 
 
 class TokenAuthenticationTestCase(APITestCase):
@@ -111,7 +106,7 @@ class ExternalAuthenticationTestCase(TestCase):
         self.assertEqual(settings.REMOTE_AUTH_HEADER, 'HTTP_REMOTE_USER')
 
         # Client should not be authenticated
-        response = self.client.get(reverse('home'), follow=True, **headers)
+        self.client.get(reverse('home'), follow=True, **headers)
         self.assertNotIn('_auth_user_id', self.client.session)
 
     @override_settings(
@@ -453,7 +448,7 @@ class ObjectPermissionAPIViewTestCase(TestCase):
         )
         obj_perm.save()
         obj_perm.users.add(self.user)
-        obj_perm.object_types.add(ContentType.objects.get_for_model(Prefix))
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(Prefix))
 
         # Retrieve permitted object
         url = reverse('ipam-api:prefix-detail',
@@ -483,7 +478,7 @@ class ObjectPermissionAPIViewTestCase(TestCase):
         )
         obj_perm.save()
         obj_perm.users.add(self.user)
-        obj_perm.object_types.add(ContentType.objects.get_for_model(Prefix))
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(Prefix))
 
         # Retrieve all objects. Only permitted objects should be returned.
         response = self.client.get(url, **self.header)
@@ -511,7 +506,7 @@ class ObjectPermissionAPIViewTestCase(TestCase):
         )
         obj_perm.save()
         obj_perm.users.add(self.user)
-        obj_perm.object_types.add(ContentType.objects.get_for_model(Prefix))
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(Prefix))
 
         # Attempt to create a non-permitted object
         response = self.client.post(url, data, format='json', **self.header)
@@ -542,7 +537,7 @@ class ObjectPermissionAPIViewTestCase(TestCase):
         )
         obj_perm.save()
         obj_perm.users.add(self.user)
-        obj_perm.object_types.add(ContentType.objects.get_for_model(Prefix))
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(Prefix))
 
         # Attempt to edit a non-permitted object
         data = {'site': self.sites[0].pk}
@@ -582,7 +577,7 @@ class ObjectPermissionAPIViewTestCase(TestCase):
         )
         obj_perm.save()
         obj_perm.users.add(self.user)
-        obj_perm.object_types.add(ContentType.objects.get_for_model(Prefix))
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(Prefix))
 
         # Attempt to delete a non-permitted object
         url = reverse('ipam-api:prefix-detail',

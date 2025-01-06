@@ -6,10 +6,13 @@ from django.utils.translation import gettext_lazy as _
 from circuits.choices import *
 from dcim.models import CabledObjectModel
 from netbox.models import ChangeLoggedModel, OrganizationalModel, PrimaryModel
-from netbox.models.features import ContactsMixin, CustomFieldsMixin, CustomLinksMixin, ImageAttachmentsMixin, TagsMixin
+from netbox.models.features import ContactsMixin, CustomFieldsMixin, CustomLinksMixin, ExportTemplatesMixin, ImageAttachmentsMixin, TagsMixin
+from utilities.fields import ColorField
 
 __all__ = (
     'Circuit',
+    'CircuitGroup',
+    'CircuitGroupAssignment',
     'CircuitTermination',
     'CircuitType',
 )
@@ -20,6 +23,11 @@ class CircuitType(OrganizationalModel):
     Circuits can be organized by their functional role. For example, a user might wish to define CircuitTypes named
     "Long Haul," "Metro," or "Out-of-Band".
     """
+    color = ColorField(
+        verbose_name=_('color'),
+        blank=True
+    )
+
     def get_absolute_url(self):
         return reverse('circuits:circuittype', args=[self.pk])
 
@@ -145,6 +153,75 @@ class Circuit(ContactsMixin, ImageAttachmentsMixin, PrimaryModel):
             raise ValidationError({'provider_account': "The assigned account must belong to the assigned provider."})
 
 
+class CircuitGroup(OrganizationalModel):
+    """
+    An administrative grouping of Circuits.
+    """
+    tenant = models.ForeignKey(
+        to='tenancy.Tenant',
+        on_delete=models.PROTECT,
+        related_name='circuit_groups',
+        blank=True,
+        null=True
+    )
+
+    class Meta:
+        ordering = ('name',)
+        verbose_name = _('circuit group')
+        verbose_name_plural = _('circuit groups')
+
+    def __str__(self):
+        return self.name
+
+    def get_absolute_url(self):
+        return reverse('circuits:circuitgroup', args=[self.pk])
+
+
+class CircuitGroupAssignment(CustomFieldsMixin, ExportTemplatesMixin, TagsMixin, ChangeLoggedModel):
+    """
+    Assignment of a Circuit to a CircuitGroup with an optional priority.
+    """
+    circuit = models.ForeignKey(
+        Circuit,
+        on_delete=models.CASCADE,
+        related_name='assignments'
+    )
+    group = models.ForeignKey(
+        CircuitGroup,
+        on_delete=models.CASCADE,
+        related_name='assignments'
+    )
+    priority = models.CharField(
+        verbose_name=_('priority'),
+        max_length=50,
+        choices=CircuitPriorityChoices,
+        blank=True
+    )
+    prerequisite_models = (
+        'circuits.Circuit',
+        'circuits.CircuitGroup',
+    )
+
+    class Meta:
+        ordering = ('group', 'circuit', 'priority', 'pk')
+        constraints = (
+            models.UniqueConstraint(
+                fields=('circuit', 'group'),
+                name='%(app_label)s_%(class)s_unique_circuit_group'
+            ),
+        )
+        verbose_name = _('Circuit group assignment')
+        verbose_name_plural = _('Circuit group assignments')
+
+    def __str__(self):
+        if self.priority:
+            return f"{self.group} ({self.get_priority_display()})"
+        return str(self.group)
+
+    def get_absolute_url(self):
+        return reverse('circuits:circuitgroupassignment', args=[self.pk])
+
+
 class CircuitTermination(
     CustomFieldsMixin,
     CustomLinksMixin,
@@ -221,16 +298,16 @@ class CircuitTermination(
         return f'{self.circuit}: Termination {self.term_side}'
 
     def get_absolute_url(self):
-        return self.circuit.get_absolute_url()
+        return reverse('circuits:circuittermination', args=[self.pk])
 
     def clean(self):
         super().clean()
 
         # Must define either site *or* provider network
         if self.site is None and self.provider_network is None:
-            raise ValidationError("A circuit termination must attach to either a site or a provider network.")
+            raise ValidationError(_("A circuit termination must attach to either a site or a provider network."))
         if self.site and self.provider_network:
-            raise ValidationError("A circuit termination cannot attach to both a site and a provider network.")
+            raise ValidationError(_("A circuit termination cannot attach to both a site and a provider network."))
 
     def to_objectchange(self, action):
         objectchange = super().to_objectchange(action)

@@ -10,19 +10,19 @@ The Django [content types](https://docs.djangoproject.com/en/stable/ref/contrib/
 
 Depending on its classification, each NetBox model may support various features which enhance its operation. Each feature is enabled by inheriting from its designated mixin class, and some features also make use of the [application registry](./application-registry.md#model_features).
 
-| Feature                                                    | Feature Mixin           | Registry Key       | Description                                                                    |
-|------------------------------------------------------------|-------------------------|--------------------|--------------------------------------------------------------------------------|
-| [Change logging](../features/change-logging.md)            | `ChangeLoggingMixin`    | -                  | Changes to these objects are automatically recorded in the change log          |
-| Cloning                                                    | `CloningMixin`          | -                  | Provides the `clone()` method to prepare a copy                                |
-| [Custom fields](../customization/custom-fields.md)         | `CustomFieldsMixin`     | `custom_fields`    | These models support the addition of user-defined fields                       |
-| [Custom links](../customization/custom-links.md)           | `CustomLinksMixin`      | `custom_links`     | These models support the assignment of custom links                            |
-| [Custom validation](../customization/custom-validation.md) | `CustomValidationMixin` | -                  | Supports the enforcement of custom validation rules                            |
-| [Export templates](../customization/export-templates.md)   | `ExportTemplatesMixin`  | `export_templates` | Users can create custom export templates for these models                      |
-| [Job results](../features/background-jobs.md)              | `JobsMixin`             | `jobs`             | Users can create custom export templates for these models                      |
-| [Journaling](../features/journaling.md)                    | `JournalingMixin`       | `journaling`       | These models support persistent historical commentary                          |
-| [Synchronized data](../integrations/synchronized-data.md)  | `SyncedDataMixin`       | `synced_data`      | Certain model data can be automatically synchronized from a remote data source |
-| [Tagging](../models/extras/tag.md)                         | `TagsMixin`             | `tags`             | The models can be tagged with user-defined tags                                |
-| [Webhooks](../integrations/webhooks.md)                    | `WebhooksMixin`         | `webhooks`         | NetBox is capable of generating outgoing webhooks for these objects            |
+| Feature                                                    | Feature Mixin           | Registry Key       | Description                                                                             |
+|------------------------------------------------------------|-------------------------|--------------------|-----------------------------------------------------------------------------------------|
+| [Change logging](../features/change-logging.md)            | `ChangeLoggingMixin`    | -                  | Changes to these objects are automatically recorded in the change log                   |
+| Cloning                                                    | `CloningMixin`          | -                  | Provides the `clone()` method to prepare a copy                                         |
+| [Custom fields](../customization/custom-fields.md)         | `CustomFieldsMixin`     | `custom_fields`    | These models support the addition of user-defined fields                                |
+| [Custom links](../customization/custom-links.md)           | `CustomLinksMixin`      | `custom_links`     | These models support the assignment of custom links                                     |
+| [Custom validation](../customization/custom-validation.md) | `CustomValidationMixin` | -                  | Supports the enforcement of custom validation rules                                     |
+| [Export templates](../customization/export-templates.md)   | `ExportTemplatesMixin`  | `export_templates` | Users can create custom export templates for these models                               |
+| [Job results](../features/background-jobs.md)              | `JobsMixin`             | `jobs`             | Background jobs can be scheduled for these models                                       |
+| [Journaling](../features/journaling.md)                    | `JournalingMixin`       | `journaling`       | These models support persistent historical commentary                                   |
+| [Synchronized data](../integrations/synchronized-data.md)  | `SyncedDataMixin`       | `synced_data`      | Certain model data can be automatically synchronized from a remote data source          |
+| [Tagging](../models/extras/tag.md)                         | `TagsMixin`             | `tags`             | The models can be tagged with user-defined tags                                         |
+| [Event rules](../features/event-rules.md)                  | `EventRulesMixin`       | `event_rules`      | Event rules can send webhooks or run custom scripts automatically in response to events |
 
 ## Models Index
 
@@ -34,7 +34,9 @@ These are considered the "core" application models which are used to model netwo
 * [circuits.Provider](../models/circuits/provider.md)
 * [circuits.ProviderAccount](../models/circuits/provideraccount.md)
 * [circuits.ProviderNetwork](../models/circuits/providernetwork.md)
+* [core.DataFile](../models/core/datafile.md)
 * [core.DataSource](../models/core/datasource.md)
+* [core.Job](../models/core/job.md)
 * [dcim.Cable](../models/dcim/cable.md)
 * [dcim.Device](../models/dcim/device.md)
 * [dcim.DeviceType](../models/dcim/devicetype.md)
@@ -44,15 +46,16 @@ These are considered the "core" application models which are used to model netwo
 * [dcim.PowerPanel](../models/dcim/powerpanel.md)
 * [dcim.Rack](../models/dcim/rack.md)
 * [dcim.RackReservation](../models/dcim/rackreservation.md)
+* [dcim.RackType](../models/dcim/racktype.md)
 * [dcim.Site](../models/dcim/site.md)
 * [dcim.VirtualChassis](../models/dcim/virtualchassis.md)
 * [dcim.VirtualDeviceContext](../models/dcim/virtualdevicecontext.md)
 * [ipam.Aggregate](../models/ipam/aggregate.md)
 * [ipam.ASN](../models/ipam/asn.md)
 * [ipam.FHRPGroup](../models/ipam/fhrpgroup.md)
+* [ipam.FHRPGroupAssignment](../models/ipam/fhrpgroupassignment.md)
 * [ipam.IPAddress](../models/ipam/ipaddress.md)
 * [ipam.IPRange](../models/ipam/iprange.md)
-* [ipam.L2VPN](../models/ipam/l2vpn.md)
 * [ipam.Prefix](../models/ipam/prefix.md)
 * [ipam.RouteTarget](../models/ipam/routetarget.md)
 * [ipam.Service](../models/ipam/service.md)
@@ -63,6 +66,13 @@ These are considered the "core" application models which are used to model netwo
 * [tenancy.Tenant](../models/tenancy/tenant.md)
 * [virtualization.Cluster](../models/virtualization/cluster.md)
 * [virtualization.VirtualMachine](../models/virtualization/virtualmachine.md)
+* [vpn.IKEPolicy](../models/vpn/ikepolicy.md)
+* [vpn.IKEProposal](../models/vpn/ikeproposal.md)
+* [vpn.IPSecPolicy](../models/vpn/ipsecpolicy.md)
+* [vpn.IPSecProfile](../models/vpn/ipsecprofile.md)
+* [vpn.IPSecProposal](../models/vpn/ipsecproposal.md)
+* [vpn.L2VPN](../models/vpn/l2vpn.md)
+* [vpn.Tunnel](../models/vpn/tunnel.md)
 * [wireless.WirelessLAN](../models/wireless/wirelesslan.md)
 * [wireless.WirelessLink](../models/wireless/wirelesslink.md)
 
@@ -70,17 +80,20 @@ These are considered the "core" application models which are used to model netwo
 
 Organization models are used to organize and classify primary models.
 
+* [circuits.CircuitGroup](../models/circuits/circuitgroup.md)
 * [circuits.CircuitType](../models/circuits/circuittype.md)
 * [dcim.DeviceRole](../models/dcim/devicerole.md)
 * [dcim.Manufacturer](../models/dcim/manufacturer.md)
 * [dcim.Platform](../models/dcim/platform.md)
 * [dcim.RackRole](../models/dcim/rackrole.md)
+* [ipam.ASNRange](../models/ipam/asnrange.md)
 * [ipam.RIR](../models/ipam/rir.md)
 * [ipam.Role](../models/ipam/role.md)
 * [ipam.VLANGroup](../models/ipam/vlangroup.md)
 * [tenancy.ContactRole](../models/tenancy/contactrole.md)
 * [virtualization.ClusterGroup](../models/virtualization/clustergroup.md)
 * [virtualization.ClusterType](../models/virtualization/clustertype.md)
+* [vpn.TunnelGroup](../models/vpn/tunnelgroup.md)
 
 ### Nested Group Models
 
@@ -107,11 +120,12 @@ Component models represent individual physical or virtual components belonging t
 * [dcim.PowerOutlet](../models/dcim/poweroutlet.md)
 * [dcim.PowerPort](../models/dcim/powerport.md)
 * [dcim.RearPort](../models/dcim/rearport.md)
+* [virtualization.VirtualDisk](../models/virtualization/virtualdisk.md)
 * [virtualization.VMInterface](../models/virtualization/vminterface.md)
 
 ### Component Template Models
 
-These function as templates to effect the replication of device and virtual machine components. Component template models support a limited feature set, including change logging, custom validation, and webhooks.
+These function as templates to effect the replication of device and virtual machine components. Component template models support a limited feature set, including change logging, custom validation, and event rules.
 
 * [dcim.ConsolePortTemplate](../models/dcim/consoleporttemplate.md)
 * [dcim.ConsoleServerPortTemplate](../models/dcim/consoleserverporttemplate.md)
@@ -123,3 +137,10 @@ These function as templates to effect the replication of device and virtual mach
 * [dcim.PowerOutletTemplate](../models/dcim/poweroutlettemplate.md)
 * [dcim.PowerPortTemplate](../models/dcim/powerporttemplate.md)
 * [dcim.RearPortTemplate](../models/dcim/rearporttemplate.md)
+
+### Connection Models
+
+Connection models are used to model the connections, or connection endpoints between models.
+
+* [circuits.CircuitTermination](../models/circuits/circuittermination.md)
+* [vpn.TunnelTermination](../models/vpn/tunneltermination.md)

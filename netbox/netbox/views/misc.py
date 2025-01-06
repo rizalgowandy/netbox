@@ -2,30 +2,36 @@ import re
 from collections import namedtuple
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.shortcuts import redirect, render
+from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
+from django.views.static import serve
 from django_tables2 import RequestConfig
 from packaging import version
 
-from extras.dashboard.utils import get_dashboard
+from extras.constants import DEFAULT_DASHBOARD
+from extras.dashboard.utils import get_dashboard, get_default_dashboard
 from netbox.forms import SearchForm
 from netbox.search import LookupTypes
 from netbox.search.backends import search_backend
 from netbox.tables import SearchTable
-from utilities.htmx import is_htmx
+from utilities.htmx import htmx_partial
 from utilities.paginator import EnhancedPaginator, get_paginate_count
+from utilities.views import ConditionalLoginRequiredMixin
 
 __all__ = (
     'HomeView',
+    'MediaView',
     'SearchView',
 )
 
 Link = namedtuple('Link', ('label', 'viewname', 'permission', 'count'))
 
 
-class HomeView(View):
+class HomeView(ConditionalLoginRequiredMixin, View):
     template_name = 'home.html'
 
     def get(self, request):
@@ -33,7 +39,13 @@ class HomeView(View):
             return redirect('login')
 
         # Construct the user's custom dashboard layout
-        dashboard = get_dashboard(request.user).get_layout()
+        try:
+            dashboard = get_dashboard(request.user).get_layout()
+        except Exception:
+            messages.error(request, _(
+                "There was an error loading the dashboard configuration. A default dashboard is in use."
+            ))
+            dashboard = get_default_dashboard(config=DEFAULT_DASHBOARD).get_layout()
 
         # Check whether a new release is available. (Only for staff/superusers.)
         new_release = None
@@ -41,7 +53,7 @@ class HomeView(View):
             latest_release = cache.get('latest_release')
             if latest_release:
                 release_version, release_url = latest_release
-                if release_version > version.parse(settings.VERSION):
+                if release_version > version.parse(settings.RELEASE.version):
                     new_release = {
                         'version': str(release_version),
                         'url': release_url,
@@ -53,7 +65,7 @@ class HomeView(View):
         })
 
 
-class SearchView(View):
+class SearchView(ConditionalLoginRequiredMixin, View):
 
     def get(self, request):
         results = []
@@ -96,7 +108,7 @@ class SearchView(View):
         }).configure(table)
 
         # If this is an HTMX request, return only the rendered table HTML
-        if is_htmx(request):
+        if htmx_partial(request):
             return render(request, 'htmx/table.html', {
                 'table': table,
             })
@@ -105,3 +117,11 @@ class SearchView(View):
             'form': form,
             'table': table,
         })
+
+
+class MediaView(ConditionalLoginRequiredMixin, View):
+    """
+    Wrap Django's serve() view to enforce LOGIN_REQUIRED for static media.
+    """
+    def get(self, request, path):
+        return serve(request, path, document_root=settings.MEDIA_ROOT)

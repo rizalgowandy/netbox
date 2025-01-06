@@ -15,7 +15,7 @@ DATABASE = {
 }
 
 PLUGINS = [
-    'extras.tests.dummy_plugin',
+    'netbox.tests.dummy_plugin',
 ]
 
 REDIS = {
@@ -38,6 +38,8 @@ REDIS = {
 }
 
 SECRET_KEY = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+
+DJANGO_ADMIN_ENABLED = True
 
 DEFAULT_PERMISSIONS = {}
 

@@ -1,10 +1,12 @@
+import warnings
+
 from rest_framework import serializers
 
 from core.choices import JobStatusChoices
 from core.models import *
 from netbox.api.fields import ChoiceField
 from netbox.api.serializers import WritableNestedSerializer
-from users.api.nested_serializers import NestedUserSerializer
+from users.api.serializers import UserSerializer
 
 __all__ = (
     'NestedDataFileSerializer',
@@ -12,30 +14,34 @@ __all__ = (
     'NestedJobSerializer',
 )
 
+# TODO: Remove in v4.2
+warnings.warn(
+    "Dedicated nested serializers will be removed in NetBox v4.2. Use Serializer(nested=True) instead.",
+    DeprecationWarning
+)
+
 
 class NestedDataSourceSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='core-api:datasource-detail')
 
     class Meta:
         model = DataSource
-        fields = ['id', 'url', 'display', 'name']
+        fields = ['id', 'url', 'display_url', 'display', 'name']
 
 
 class NestedDataFileSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='core-api:datafile-detail')
 
     class Meta:
         model = DataFile
-        fields = ['id', 'url', 'display', 'path']
+        fields = ['id', 'url', 'display_url', 'display', 'path']
 
 
 class NestedJobSerializer(serializers.ModelSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='core-api:job-detail')
     status = ChoiceField(choices=JobStatusChoices)
-    user = NestedUserSerializer(
+    user = UserSerializer(
+        nested=True,
         read_only=True
     )
 
     class Meta:
         model = Job
-        fields = ['url', 'created', 'completed', 'user', 'status']
+        fields = ['url', 'display_url', 'created', 'completed', 'user', 'status']

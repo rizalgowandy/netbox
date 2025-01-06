@@ -3,12 +3,12 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django_filters.constants import EMPTY_VALUES
-from drf_spectacular.utils import extend_schema_field
 from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import extend_schema_field
 
 __all__ = (
     'ContentTypeFilter',
-    'MACAddressFilter',
+    'MultiValueArrayFilter',
     'MultiValueCharFilter',
     'MultiValueDateFilter',
     'MultiValueDateTimeFilter',
@@ -85,8 +85,19 @@ class MultiValueTimeFilter(django_filters.MultipleChoiceFilter):
     field_class = multivalue_field_factory(forms.TimeField)
 
 
-class MACAddressFilter(django_filters.CharFilter):
-    pass
+@extend_schema_field(OpenApiTypes.STR)
+class MultiValueArrayFilter(django_filters.MultipleChoiceFilter):
+    field_class = multivalue_field_factory(forms.CharField)
+
+    def __init__(self, *args, lookup_expr='contains', **kwargs):
+        # Set default lookup_expr to 'contains'
+        super().__init__(*args, lookup_expr=lookup_expr, **kwargs)
+
+    def get_filter_predicate(self, v):
+        # If filtering for null values, ignore lookup_expr
+        if v is None:
+            return {self.field_name: None}
+        return super().get_filter_predicate(v)
 
 
 @extend_schema_field(OpenApiTypes.STR)
@@ -105,6 +116,7 @@ class MultiValueWWNFilter(django_filters.MultipleChoiceFilter):
     field_class = multivalue_field_factory(forms.CharField)
 
 
+@extend_schema_field(OpenApiTypes.STR)
 class TreeNodeMultipleChoiceFilter(django_filters.ModelMultipleChoiceFilter):
     """
     Filters for a set of Models, including all descendant models within a Tree.  Example: [<Region: R1>,<Region: R2>]

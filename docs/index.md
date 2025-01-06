@@ -1,10 +1,11 @@
-![NetBox](netbox_logo.svg "NetBox logo"){style="height: 100px; margin-bottom: 3em"}
+![NetBox](netbox_logo_light.svg#only-light "NetBox logo"){style="height: 100px; margin-bottom: 3em; background: none;"}
+![NetBox](netbox_logo_dark.svg#only-dark "NetBox logo"){style="height: 100px; margin-bottom: 3em; background: none;"}
 
 # The Premier Network Source of Truth
 
 NetBox is the leading solution for modeling and documenting modern networks. By combining the traditional disciplines of IP address management (IPAM) and datacenter infrastructure management (DCIM) with powerful APIs and extensions, NetBox provides the ideal "source of truth" to power network automation. Read on to discover why thousands of organizations worldwide put NetBox at the heart of their infrastructure.
 
-[![NetBox UI](./media/screenshots/netbox-ui.png)](./media/screenshots/netbox-ui.png)
+[![NetBox UI](./media/screenshots/home-light.png)](./media/screenshots/home-light.png)
 
 ## :material-server-network: Built for Networks
 
@@ -32,7 +33,7 @@ In addition to its expansive and robust data model, NetBox offers myriad mechani
 * Custom fields
 * Custom model validation
 * Export templates
-* Webhooks
+* Event rules
 * Plugins
 * REST & GraphQL APIs
 

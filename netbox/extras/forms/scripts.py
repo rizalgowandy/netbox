@@ -2,16 +2,15 @@ from django import forms
 from django.utils.translation import gettext_lazy as _
 
 from extras.choices import DurationChoices
-from utilities.forms import BootstrapMixin
 from utilities.forms.widgets import DateTimePicker, NumberWithOptions
-from utilities.utils import local_now
+from utilities.datetime import local_now
 
 __all__ = (
     'ScriptForm',
 )
 
 
-class ScriptForm(BootstrapMixin, forms.Form):
+class ScriptForm(forms.Form):
     _commit = forms.BooleanField(
         required=False,
         initial=True,
@@ -38,7 +37,7 @@ class ScriptForm(BootstrapMixin, forms.Form):
         super().__init__(*args, **kwargs)
 
         # Annotate the current system time for reference
-        now = local_now().strftime('%Y-%m-%d %H:%M:%S')
+        now = local_now().strftime('%Y-%m-%d %H:%M:%S %Z')
         self.fields['_schedule_at'].help_text += _(' (current time: <strong>{now}</strong>)').format(now=now)
 
         # Remove scheduling fields if scheduling is disabled

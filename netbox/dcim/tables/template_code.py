@@ -21,44 +21,48 @@ WEIGHT = """
 """
 
 DEVICE_LINK = """
-{{ value|default:'<span class="badge bg-info">Unnamed device</span>' }}
+{{ value|default:'<span class="badge text-bg-info">Unnamed device</span>' }}
 """
 
 DEVICEBAY_STATUS = """
 {% if record.installed_device_id %}
-    <span class="badge bg-{{ record.installed_device.get_status_color }}">
+    <span class="badge text-bg-{{ record.installed_device.get_status_color }}">
         {{ record.installed_device.get_status_display }}
     </span>
 {% else %}
-    <span class="badge bg-secondary">Vacant</span>
+    <span class="badge text-bg-secondary">Vacant</span>
 {% endif %}
 """
 
 INTERFACE_IPADDRESSES = """
-<div class="table-badge-group">
-  {% for ip in value.all %}
-    {% if ip.status != 'active' %}
-      <a href="{{ ip.get_absolute_url }}" class="table-badge badge bg-{{ ip.get_status_color }}" data-bs-toggle="tooltip" data-bs-placement="left" title="{{ ip.get_status_display }}">{{ ip }}</a>
-    {% else %}
-      <a href="{{ ip.get_absolute_url }}" class="table-badge">{{ ip }}</a>
-    {% endif %}
-  {% endfor %}
-</div>
+  {% if value.count > 3 %}
+    <a href="{% url 'ipam:ipaddress_list' %}?{{ record|meta:"model_name" }}_id={{ record.pk }}">{{ value.count }}</a>
+  {% else %}
+    {% for ip in value.all %}
+      {% if ip.status != 'active' %}
+        <a href="{{ ip.get_absolute_url }}" class="badge text-bg-{{ ip.get_status_color }}" data-bs-toggle="tooltip" data-bs-placement="left" title="{{ ip.get_status_display }}">{{ ip }}</a>
+      {% else %}
+        <a href="{{ ip.get_absolute_url }}">{{ ip }}</a>
+      {% endif %}
+    {% endfor %}
+  {% endif %}
 """
 
 INTERFACE_FHRPGROUPS = """
-<div class="table-badge-group">
   {% for assignment in value.all %}
     <a href="{{ assignment.group.get_absolute_url }}">{{ assignment.group.get_protocol_display }}: {{ assignment.group.group_id }}</a>
   {% endfor %}
-</div>
 """
 
 INTERFACE_TAGGED_VLANS = """
 {% if record.mode == 'tagged' %}
+  {% if value.count > 3 %}
+    <a href="{% url 'ipam:vlan_list' %}?{{ record|meta:"model_name" }}_id={{ record.pk }}">{{ value.count }} VLANs</a>
+  {% else %}
     {% for vlan in value.all %}
         <a href="{{ vlan.get_absolute_url }}">{{ vlan }}</a><br />
     {% endfor %}
+  {% endif %}
 {% elif record.mode == 'tagged-all' %}
   All
 {% endif %}
@@ -316,8 +320,8 @@ INTERFACE_BUTTONS = """
       {% if perms.dcim.add_interface %}
         <li><a class="dropdown-item" href="{% url 'dcim:interface_add' %}?device={{ record.device_id }}&parent={{ record.pk }}&name={{ record.name }}.&type=virtual&return_url={% url 'dcim:device_interfaces' pk=object.pk %}">Child Interface</a></li>
       {% endif %}
-      {% if perms.ipam.add_l2vpntermination %}
-        <li><a class="dropdown-item" href="{% url 'ipam:l2vpntermination_add' %}?device={{ object.pk }}&interface={{ record.pk }}&return_url={% url 'dcim:device_interfaces' pk=object.pk %}">L2VPN Termination</a></li>
+      {% if perms.vpn.add_l2vpntermination %}
+        <li><a class="dropdown-item" href="{% url 'vpn:l2vpntermination_add' %}?device={{ object.pk }}&interface={{ record.pk }}&return_url={% url 'dcim:device_interfaces' pk=object.pk %}">L2VPN Termination</a></li>
       {% endif %}
       {% if perms.ipam.add_fhrpgroupassignment %}
         <li><a class="dropdown-item" href="{% url 'ipam:fhrpgroupassignment_add' %}?interface_type={{ record|content_type_id }}&interface_id={{ record.pk }}&return_url={% url 'dcim:device_interfaces' pk=object.pk %}">Assign FHRP Group</a></li>
@@ -357,6 +361,16 @@ INTERFACE_BUTTONS = """
     {% if perms.wireless.delete_wirelesslink %}
         <a href="{% url 'wireless:wirelesslink_delete' pk=record.wireless_link.pk %}?return_url={% url 'dcim:device_interfaces' pk=object.pk %}" title="Delete wireless link" class="btn btn-danger btn-sm">
             <i class="mdi mdi-wifi-off" aria-hidden="true"></i>
+        </a>
+    {% endif %}
+{% elif record.type == 'virtual' %}
+    {% if perms.vpn.add_tunnel and not record.tunnel_termination %}
+        <a href="{% url 'vpn:tunnel_add' %}?termination1_type=dcim.device&termination1_parent={{ record.device.pk }}&termination1_termination={{ record.pk }}&return_url={% url 'dcim:device_interfaces' pk=object.pk %}" title="Create a tunnel" class="btn btn-success btn-sm">
+            <i class="mdi mdi-tunnel-outline" aria-hidden="true"></i>
+        </a>
+    {% elif perms.vpn.delete_tunneltermination and record.tunnel_termination %}
+        <a href="{% url 'vpn:tunneltermination_delete' pk=record.tunnel_termination.pk %}?return_url={% url 'dcim:device_interfaces' pk=object.pk %}" title="Remove tunnel" class="btn btn-danger btn-sm">
+            <i class="mdi mdi-tunnel-outline" aria-hidden="true"></i>
         </a>
     {% endif %}
 {% elif record.is_wired and perms.dcim.add_cable %}

@@ -1,13 +1,16 @@
+import json
 import logging
 import re
 from contextlib import contextmanager
 
-from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.utils.text import slugify
 
+from core.models import ObjectType
 from dcim.models import Device, DeviceRole, DeviceType, Manufacturer, Site
-from extras.models import Tag
+from extras.choices import CustomFieldTypeChoices
+from extras.models import CustomField, Tag
+from users.models import User
 from virtualization.models import Cluster, ClusterType, VirtualMachine
 
 
@@ -64,7 +67,7 @@ def create_test_user(username='testuser', permissions=None):
     """
     Create a User with the given permissions.
     """
-    user = get_user_model().objects.create_user(username=username)
+    user = User.objects.create_user(username=username)
     if permissions is None:
         permissions = ()
     for perm_name in permissions:
@@ -102,3 +105,52 @@ def disable_warnings(logger_name):
     logger.setLevel(logging.ERROR)
     yield
     logger.setLevel(current_level)
+
+
+@contextmanager
+def disable_logging(level=logging.CRITICAL):
+    """
+    Temporarily suppress log messages at or below the specified level (default: critical).
+    """
+    logging.disable(level)
+    yield
+    logging.disable(logging.NOTSET)
+
+
+#
+# Custom field testing
+#
+
+DUMMY_CF_DATA = {
+    'text_field': 'foo123',
+    'integer_field': 456,
+    'decimal_field': 456.12,
+    'boolean_field': True,
+    'json_field': {'abc': 123},
+}
+
+
+def add_custom_field_data(form_data, model):
+    """
+    Create some custom fields for the model and add a value for each to the form data.
+
+    Args:
+        form_data: The dictionary of form data to be updated
+        model: The model of the object the form seeks to create or modify
+    """
+    object_type = ObjectType.objects.get_for_model(model)
+    custom_fields = (
+        CustomField(type=CustomFieldTypeChoices.TYPE_TEXT, name='text_field', default='foo'),
+        CustomField(type=CustomFieldTypeChoices.TYPE_INTEGER, name='integer_field', default=123),
+        CustomField(type=CustomFieldTypeChoices.TYPE_DECIMAL, name='decimal_field', default=123.45),
+        CustomField(type=CustomFieldTypeChoices.TYPE_BOOLEAN, name='boolean_field', default=False),
+        CustomField(type=CustomFieldTypeChoices.TYPE_JSON, name='json_field', default='{"x": "y"}'),
+    )
+    CustomField.objects.bulk_create(custom_fields)
+    for cf in custom_fields:
+        cf.object_types.set([object_type])
+
+    form_data.update({
+        f'cf_{k}': v if type(v) is str else json.dumps(v)
+        for k, v in DUMMY_CF_DATA.items()
+    })

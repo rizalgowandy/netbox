@@ -2,10 +2,13 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from circuits.models import *
+from core.models import ObjectType
 from dcim.choices import *
 from dcim.models import *
+from extras.models import CustomField
 from tenancy.models import Tenant
-from utilities.utils import drange
+from utilities.data import drange
+from virtualization.models import Cluster, ClusterType
 
 
 class LocationTestCase(TestCase):
@@ -69,6 +72,61 @@ class LocationTestCase(TestCase):
         self.assertEqual(Device.objects.get(pk=device1.pk).site, site_b)
         self.assertEqual(Device.objects.get(pk=device2.pk).site, site_b)
         self.assertEqual(PowerPanel.objects.get(pk=powerpanel1.pk).site, site_b)
+
+
+class RackTypeTestCase(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
+
+        RackType.objects.create(
+            manufacturer=manufacturer,
+            model='RackType 1',
+            slug='rack-type-1',
+            width=11,
+            u_height=22,
+            starting_unit=3,
+            desc_units=True,
+            outer_width=444,
+            outer_depth=5,
+            outer_unit=RackDimensionUnitChoices.UNIT_MILLIMETER,
+            weight=66,
+            weight_unit=WeightUnitChoices.UNIT_POUND,
+            max_weight=7777,
+            mounting_depth=8,
+        )
+
+    def test_rack_creation(self):
+        rack_type = RackType.objects.first()
+        sites = (
+            Site(name='Site 1', slug='site-1'),
+        )
+        Site.objects.bulk_create(sites)
+        locations = (
+            Location(name='Location 1', slug='location-1', site=sites[0]),
+        )
+        for location in locations:
+            location.save()
+
+        rack = Rack.objects.create(
+            name='Rack 1',
+            facility_id='A101',
+            site=sites[0],
+            location=locations[0],
+            rack_type=rack_type
+        )
+        self.assertEqual(rack.width, rack_type.width)
+        self.assertEqual(rack.u_height, rack_type.u_height)
+        self.assertEqual(rack.starting_unit, rack_type.starting_unit)
+        self.assertEqual(rack.desc_units, rack_type.desc_units)
+        self.assertEqual(rack.outer_width, rack_type.outer_width)
+        self.assertEqual(rack.outer_depth, rack_type.outer_depth)
+        self.assertEqual(rack.outer_unit, rack_type.outer_unit)
+        self.assertEqual(rack.weight, rack_type.weight)
+        self.assertEqual(rack.weight_unit, rack_type.weight_unit)
+        self.assertEqual(rack.max_weight, rack_type.max_weight)
+        self.assertEqual(rack.mounting_depth, rack_type.mounting_depth)
 
 
 class RackTestCase(TestCase):
@@ -238,6 +296,40 @@ class RackTestCase(TestCase):
         # Check that Device1 is now assigned to Site B
         self.assertEqual(Device.objects.get(pk=device1.pk).site, site_b)
 
+    def test_utilization(self):
+        site = Site.objects.first()
+        rack = Rack.objects.first()
+
+        Device(
+            name='Device 1',
+            role=DeviceRole.objects.first(),
+            device_type=DeviceType.objects.first(),
+            site=site,
+            rack=rack,
+            position=1
+        ).save()
+        rack.refresh_from_db()
+        self.assertEqual(rack.get_utilization(), 1 / 42 * 100)
+
+        # create device excluded from utilization calculations
+        dt = DeviceType.objects.create(
+            manufacturer=Manufacturer.objects.first(),
+            model='Device Type 4',
+            slug='device-type-4',
+            u_height=1,
+            exclude_from_utilization=True
+        )
+        Device(
+            name='Device 2',
+            role=DeviceRole.objects.first(),
+            device_type=dt,
+            site=site,
+            rack=rack,
+            position=5
+        ).save()
+        rack.refresh_from_db()
+        self.assertEqual(rack.get_utilization(), 1 / 42 * 100)
+
 
 class DeviceTestCase(TestCase):
 
@@ -255,6 +347,23 @@ class DeviceTestCase(TestCase):
         )
         DeviceRole.objects.bulk_create(roles)
 
+        # Create a CustomField with a default value & assign it to all component models
+        cf1 = CustomField.objects.create(name='cf1', default='foo')
+        cf1.object_types.set(
+            ObjectType.objects.filter(app_label='dcim', model__in=[
+                'consoleport',
+                'consoleserverport',
+                'powerport',
+                'poweroutlet',
+                'interface',
+                'rearport',
+                'frontport',
+                'modulebay',
+                'devicebay',
+                'inventoryitem',
+            ])
+        )
+
         # Create DeviceType components
         ConsolePortTemplate(
             device_type=device_type,
@@ -266,18 +375,18 @@ class DeviceTestCase(TestCase):
             name='Console Server Port 1'
         ).save()
 
-        ppt = PowerPortTemplate(
+        powerport = PowerPortTemplate(
             device_type=device_type,
             name='Power Port 1',
             maximum_draw=1000,
             allocated_draw=500
         )
-        ppt.save()
+        powerport.save()
 
         PowerOutletTemplate(
             device_type=device_type,
             name='Power Outlet 1',
-            power_port=ppt,
+            power_port=powerport,
             feed_leg=PowerOutletFeedLegChoices.FEED_LEG_A
         ).save()
 
@@ -288,19 +397,19 @@ class DeviceTestCase(TestCase):
             mgmt_only=True
         ).save()
 
-        rpt = RearPortTemplate(
+        rearport = RearPortTemplate(
             device_type=device_type,
             name='Rear Port 1',
             type=PortTypeChoices.TYPE_8P8C,
             positions=8
         )
-        rpt.save()
+        rearport.save()
 
         FrontPortTemplate(
             device_type=device_type,
             name='Front Port 1',
             type=PortTypeChoices.TYPE_8P8C,
-            rear_port=rpt,
+            rear_port=rearport,
             rear_port_position=2
         ).save()
 
@@ -314,73 +423,93 @@ class DeviceTestCase(TestCase):
             name='Device Bay 1'
         ).save()
 
+        InventoryItemTemplate(
+            device_type=device_type,
+            name='Inventory Item 1'
+        ).save()
+
     def test_device_creation(self):
         """
         Ensure that all Device components are copied automatically from the DeviceType.
         """
-        d = Device(
+        device = Device(
             site=Site.objects.first(),
             device_type=DeviceType.objects.first(),
             role=DeviceRole.objects.first(),
             name='Test Device 1'
         )
-        d.save()
+        device.save()
 
-        ConsolePort.objects.get(
-            device=d,
+        consoleport = ConsolePort.objects.get(
+            device=device,
             name='Console Port 1'
         )
+        self.assertEqual(consoleport.cf['cf1'], 'foo')
 
-        ConsoleServerPort.objects.get(
-            device=d,
+        consoleserverport = ConsoleServerPort.objects.get(
+            device=device,
             name='Console Server Port 1'
         )
+        self.assertEqual(consoleserverport.cf['cf1'], 'foo')
 
-        pp = PowerPort.objects.get(
-            device=d,
+        powerport = PowerPort.objects.get(
+            device=device,
             name='Power Port 1',
             maximum_draw=1000,
             allocated_draw=500
         )
+        self.assertEqual(powerport.cf['cf1'], 'foo')
 
-        PowerOutlet.objects.get(
-            device=d,
+        poweroutlet = PowerOutlet.objects.get(
+            device=device,
             name='Power Outlet 1',
-            power_port=pp,
+            power_port=powerport,
             feed_leg=PowerOutletFeedLegChoices.FEED_LEG_A
         )
+        self.assertEqual(poweroutlet.cf['cf1'], 'foo')
 
-        Interface.objects.get(
-            device=d,
+        interface = Interface.objects.get(
+            device=device,
             name='Interface 1',
             type=InterfaceTypeChoices.TYPE_1GE_FIXED,
             mgmt_only=True
         )
+        self.assertEqual(interface.cf['cf1'], 'foo')
 
-        rp = RearPort.objects.get(
-            device=d,
+        rearport = RearPort.objects.get(
+            device=device,
             name='Rear Port 1',
             type=PortTypeChoices.TYPE_8P8C,
             positions=8
         )
+        self.assertEqual(rearport.cf['cf1'], 'foo')
 
-        FrontPort.objects.get(
-            device=d,
+        frontport = FrontPort.objects.get(
+            device=device,
             name='Front Port 1',
             type=PortTypeChoices.TYPE_8P8C,
-            rear_port=rp,
+            rear_port=rearport,
             rear_port_position=2
         )
+        self.assertEqual(frontport.cf['cf1'], 'foo')
 
-        ModuleBay.objects.get(
-            device=d,
+        modulebay = ModuleBay.objects.get(
+            device=device,
             name='Module Bay 1'
         )
+        self.assertEqual(modulebay.cf['cf1'], 'foo')
 
-        DeviceBay.objects.get(
-            device=d,
+        devicebay = DeviceBay.objects.get(
+            device=device,
             name='Device Bay 1'
         )
+        self.assertEqual(devicebay.cf['cf1'], 'foo')
+
+        inventoryitem = InventoryItem.objects.get(
+            device=device,
+            name='Inventory Item 1'
+        )
+        self.assertEqual(inventoryitem.cf['cf1'], 'foo')
 
     def test_multiple_unnamed_devices(self):
 
@@ -460,29 +589,125 @@ class DeviceTestCase(TestCase):
         device2.full_clean()
         device2.save()
 
-    def test_old_device_role_field(self):
-        """
-        Ensure that the old device role field sets the value in the new role field.
-        """
+    def test_device_mismatched_site_cluster(self):
+        cluster_type = ClusterType.objects.create(name='Cluster Type 1', slug='cluster-type-1')
+        Cluster.objects.create(name='Cluster 1', type=cluster_type)
 
-        # Test getter method
-        device = Device(
-            site=Site.objects.first(),
-            device_type=DeviceType.objects.first(),
-            role=DeviceRole.objects.first(),
-            name='Test Device 1',
-            device_role=DeviceRole.objects.first()
+        sites = (
+            Site(name='Site 1', slug='site-1'),
+            Site(name='Site 2', slug='site-2'),
         )
-        device.full_clean()
-        device.save()
+        Site.objects.bulk_create(sites)
 
-        self.assertEqual(device.role, device.device_role)
+        clusters = (
+            Cluster(name='Cluster 1', type=cluster_type, site=sites[0]),
+            Cluster(name='Cluster 2', type=cluster_type, site=sites[1]),
+            Cluster(name='Cluster 3', type=cluster_type, site=None),
+        )
+        Cluster.objects.bulk_create(clusters)
 
-        # Test setter method
-        device.device_role = DeviceRole.objects.last()
-        device.full_clean()
-        device.save()
-        self.assertEqual(device.role, device.device_role)
+        device_type = DeviceType.objects.first()
+        device_role = DeviceRole.objects.first()
+
+        # Device with site only should pass
+        Device(name='device1', site=sites[0], device_type=device_type, role=device_role).full_clean()
+
+        # Device with site, cluster non-site should pass
+        Device(name='device1', site=sites[0], device_type=device_type, role=device_role, cluster=clusters[2]).full_clean()
+
+        # Device with mismatched site & cluster should fail
+        with self.assertRaises(ValidationError):
+            Device(name='device1', site=sites[0], device_type=device_type, role=device_role, cluster=clusters[1]).full_clean()
+
+
+class ModuleBayTestCase(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        site = Site.objects.create(name='Test Site 1', slug='test-site-1')
+        manufacturer = Manufacturer.objects.create(name='Test Manufacturer 1', slug='test-manufacturer-1')
+        device_type = DeviceType.objects.create(
+            manufacturer=manufacturer, model='Test Device Type 1', slug='test-device-type-1'
+        )
+        device_role = DeviceRole.objects.create(name='Test Role 1', slug='test-role-1')
+
+        # Create a CustomField with a default value & assign it to all component models
+        location = Location.objects.create(name='Location 1', slug='location-1', site=site)
+        rack = Rack.objects.create(name='Rack 1', site=site)
+        device = Device.objects.create(name='Device 1', device_type=device_type, role=device_role, site=site, location=location, rack=rack)
+
+        module_bays = (
+            ModuleBay(device=device, name='Module Bay 1', label='A', description='First'),
+            ModuleBay(device=device, name='Module Bay 2', label='B', description='Second'),
+            ModuleBay(device=device, name='Module Bay 3', label='C', description='Third'),
+        )
+        for module_bay in module_bays:
+            module_bay.save()
+
+        manufacturer = Manufacturer.objects.create(name='Manufacturer 1', slug='manufacturer-1')
+        module_type = ModuleType.objects.create(manufacturer=manufacturer, model='Module Type 1')
+        modules = (
+            Module(device=device, module_bay=module_bays[0], module_type=module_type),
+            Module(device=device, module_bay=module_bays[1], module_type=module_type),
+            Module(device=device, module_bay=module_bays[2], module_type=module_type),
+        )
+        # M3 -> MB3 -> M2 -> MB2 -> M1 -> MB1
+        Module.objects.bulk_create(modules)
+        module_bays[1].module = modules[0]
+        module_bays[1].clean()
+        module_bays[1].save()
+        module_bays[2].module = modules[1]
+        module_bays[2].clean()
+        module_bays[2].save()
+
+    def test_module_bay_recursion(self):
+        module_bay_1 = ModuleBay.objects.get(name='Module Bay 1')
+        module_bay_3 = ModuleBay.objects.get(name='Module Bay 3')
+        module_1 = Module.objects.get(module_bay=module_bay_1)
+        module_3 = Module.objects.get(module_bay=module_bay_3)
+
+        # Confirm error if ModuleBay recurses
+        with self.assertRaises(ValidationError):
+            module_bay_1.module = module_3
+            module_bay_1.clean()
+            module_bay_1.save()
+
+        # Confirm error if Module recurses
+        with self.assertRaises(ValidationError):
+            module_1.module_bay = module_bay_3
+            module_1.clean()
+            module_1.save()
+
+    def test_single_module_token(self):
+        device_type = DeviceType.objects.first()
+        device_role = DeviceRole.objects.first()
+        site = Site.objects.first()
+        location = Location.objects.first()
+        rack = Rack.objects.first()
+
+        # Create DeviceType components
+        ConsolePortTemplate.objects.create(
+            device_type=device_type,
+            name='{module}',
+            label='{module}',
+        )
+        ModuleBayTemplate.objects.create(
+            device_type=device_type,
+            name='Module Bay 1'
+        )
+
+        device = Device.objects.create(
+            name='Device 2',
+            device_type=device_type,
+            role=device_role,
+            site=site,
+            location=location,
+            rack=rack
+        )
+        device.consoleports.first()
+
+    def test_nested_module_token(self):
+        pass
 
 
 class CableTestCase(TestCase):
@@ -504,39 +729,41 @@ class CableTestCase(TestCase):
         device2 = Device.objects.create(
             device_type=devicetype, role=role, name='TestDevice2', site=site
         )
-        interface1 = Interface.objects.create(device=device1, name='eth0')
-        interface2 = Interface.objects.create(device=device2, name='eth0')
-        interface3 = Interface.objects.create(device=device2, name='eth1')
-        Cable(a_terminations=[interface1], b_terminations=[interface2]).save()
+        interfaces = (
+            Interface(device=device1, name='eth0'),
+            Interface(device=device2, name='eth0'),
+            Interface(device=device2, name='eth1'),
+        )
+        Interface.objects.bulk_create(interfaces)
+        Cable(a_terminations=[interfaces[0]], b_terminations=[interfaces[1]]).save()
+        PowerPort.objects.create(device=device2, name='psu1')
 
-        power_port1 = PowerPort.objects.create(device=device2, name='psu1')
-        patch_pannel = Device.objects.create(
+        patch_panel = Device.objects.create(
             device_type=devicetype, role=role, name='TestPatchPanel', site=site
         )
-        rear_port1 = RearPort.objects.create(device=patch_pannel, name='RP1', type='8p8c')
-        front_port1 = FrontPort.objects.create(
-            device=patch_pannel, name='FP1', type='8p8c', rear_port=rear_port1, rear_port_position=1
+        rear_ports = (
+            RearPort(device=patch_panel, name='RP1', type='8p8c'),
+            RearPort(device=patch_panel, name='RP2', type='8p8c', positions=2),
+            RearPort(device=patch_panel, name='RP3', type='8p8c', positions=3),
+            RearPort(device=patch_panel, name='RP4', type='8p8c', positions=3),
         )
-        rear_port2 = RearPort.objects.create(device=patch_pannel, name='RP2', type='8p8c', positions=2)
-        front_port2 = FrontPort.objects.create(
-            device=patch_pannel, name='FP2', type='8p8c', rear_port=rear_port2, rear_port_position=1
+        RearPort.objects.bulk_create(rear_ports)
+        front_ports = (
+            FrontPort(device=patch_panel, name='FP1', type='8p8c', rear_port=rear_ports[0], rear_port_position=1),
+            FrontPort(device=patch_panel, name='FP2', type='8p8c', rear_port=rear_ports[1], rear_port_position=1),
+            FrontPort(device=patch_panel, name='FP3', type='8p8c', rear_port=rear_ports[2], rear_port_position=1),
+            FrontPort(device=patch_panel, name='FP4', type='8p8c', rear_port=rear_ports[3], rear_port_position=1),
         )
-        rear_port3 = RearPort.objects.create(device=patch_pannel, name='RP3', type='8p8c', positions=3)
-        front_port3 = FrontPort.objects.create(
-            device=patch_pannel, name='FP3', type='8p8c', rear_port=rear_port3, rear_port_position=1
-        )
-        rear_port4 = RearPort.objects.create(device=patch_pannel, name='RP4', type='8p8c', positions=3)
-        front_port4 = FrontPort.objects.create(
-            device=patch_pannel, name='FP4', type='8p8c', rear_port=rear_port4, rear_port_position=1
-        )
+        FrontPort.objects.bulk_create(front_ports)
+
         provider = Provider.objects.create(name='Provider 1', slug='provider-1')
         provider_network = ProviderNetwork.objects.create(name='Provider Network 1', provider=provider)
         circuittype = CircuitType.objects.create(name='Circuit Type 1', slug='circuit-type-1')
         circuit1 = Circuit.objects.create(provider=provider, type=circuittype, cid='1')
         circuit2 = Circuit.objects.create(provider=provider, type=circuittype, cid='2')
-        circuittermination1 = CircuitTermination.objects.create(circuit=circuit1, site=site, term_side='A')
-        circuittermination2 = CircuitTermination.objects.create(circuit=circuit1, site=site, term_side='Z')
-        circuittermination3 = CircuitTermination.objects.create(circuit=circuit2, provider_network=provider_network, term_side='A')
+        CircuitTermination.objects.create(circuit=circuit1, site=site, term_side='A')
+        CircuitTermination.objects.create(circuit=circuit1, site=site, term_side='Z')
+        CircuitTermination.objects.create(circuit=circuit2, provider_network=provider_network, term_side='A')
 
     def test_cable_creation(self):
         """

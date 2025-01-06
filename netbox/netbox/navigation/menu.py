@@ -1,7 +1,6 @@
-from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy as _
 
 from netbox.registry import registry
-from utilities.choices import ButtonColorChoices
 from . import *
 
 #
@@ -22,19 +21,6 @@ ORGANIZATION_MENU = Menu(
             ),
         ),
         MenuGroup(
-            label=_('Racks'),
-            items=(
-                get_model_item('dcim', 'rack', _('Racks')),
-                get_model_item('dcim', 'rackrole', _('Rack Roles')),
-                get_model_item('dcim', 'rackreservation', _('Reservations')),
-                MenuItem(
-                    link='dcim:rack_elevation_list',
-                    link_text=_('Elevations'),
-                    permissions=['dcim.view_rack']
-                ),
-            ),
-        ),
-        MenuGroup(
             label=_('Tenancy'),
             items=(
                 get_model_item('tenancy', 'tenant', _('Tenants')),
@@ -48,6 +34,32 @@ ORGANIZATION_MENU = Menu(
                 get_model_item('tenancy', 'contactgroup', _('Contact Groups')),
                 get_model_item('tenancy', 'contactrole', _('Contact Roles')),
                 get_model_item('tenancy', 'contactassignment', _('Contact Assignments'), actions=['import']),
+            ),
+        ),
+    ),
+)
+
+RACKS_MENU = Menu(
+    label=_('Racks'),
+    icon_class='mdi mdi-door-sliding',
+    groups=(
+        MenuGroup(
+            label=_('Racks'),
+            items=(
+                get_model_item('dcim', 'rack', _('Racks')),
+                get_model_item('dcim', 'rackrole', _('Rack Roles')),
+                get_model_item('dcim', 'rackreservation', _('Reservations')),
+                MenuItem(
+                    link='dcim:rack_elevation_list',
+                    link_text=_('Elevations'),
+                    permissions=['dcim.view_rack']
+                ),
+            ),
+        ),
+        MenuGroup(
+            label=_('Rack Types'),
+            items=(
+                get_model_item('dcim', 'racktype', _('Rack Types')),
             ),
         ),
     ),
@@ -102,7 +114,7 @@ CONNECTIONS_MENU = Menu(
         MenuGroup(
             label=_('Connections'),
             items=(
-                get_model_item('dcim', 'cable', _('Cables'), actions=['import']),
+                get_model_item('dcim', 'cable', _('Cables')),
                 get_model_item('wireless', 'wirelesslink', _('Wireless Links')),
                 MenuItem(
                     link='dcim:interface_connections_list',
@@ -195,15 +207,33 @@ IPAM_MENU = Menu(
     ),
 )
 
-OVERLAY_MENU = Menu(
-    label=_('Overlay'),
+VPN_MENU = Menu(
+    label=_('VPN'),
     icon_class='mdi mdi-graph-outline',
     groups=(
         MenuGroup(
-            label='L2VPNs',
+            label=_('Tunnels'),
             items=(
-                get_model_item('ipam', 'l2vpn', _('L2VPNs')),
-                get_model_item('ipam', 'l2vpntermination', _('Terminations')),
+                get_model_item('vpn', 'tunnel', _('Tunnels')),
+                get_model_item('vpn', 'tunnelgroup', _('Tunnel Groups')),
+                get_model_item('vpn', 'tunneltermination', _('Tunnel Terminations')),
+            ),
+        ),
+        MenuGroup(
+            label=_('L2VPNs'),
+            items=(
+                get_model_item('vpn', 'l2vpn', _('L2VPNs')),
+                get_model_item('vpn', 'l2vpntermination', _('Terminations')),
+            ),
+        ),
+        MenuGroup(
+            label=_('Security'),
+            items=(
+                get_model_item('vpn', 'ikeproposal', _('IKE Proposals')),
+                get_model_item('vpn', 'ikepolicy', _('IKE Policies')),
+                get_model_item('vpn', 'ipsecproposal', _('IPSec Proposals')),
+                get_model_item('vpn', 'ipsecpolicy', _('IPSec Policies')),
+                get_model_item('vpn', 'ipsecprofile', _('IPSec Profiles')),
             ),
         ),
     ),
@@ -218,6 +248,7 @@ VIRTUALIZATION_MENU = Menu(
             items=(
                 get_model_item('virtualization', 'virtualmachine', _('Virtual Machines')),
                 get_model_item('virtualization', 'vminterface', _('Interfaces')),
+                get_model_item('virtualization', 'virtualdisk', _('Virtual Disks')),
             ),
         ),
         MenuGroup(
@@ -240,6 +271,9 @@ CIRCUITS_MENU = Menu(
             items=(
                 get_model_item('circuits', 'circuit', _('Circuits')),
                 get_model_item('circuits', 'circuittype', _('Circuit Types')),
+                get_model_item('circuits', 'circuitgroup', _('Circuit Groups')),
+                get_model_item('circuits', 'circuitgroupassignment', _('Group Assignments')),
+                get_model_item('circuits', 'circuittermination', _('Circuit Terminations')),
             ),
         ),
         MenuGroup(
@@ -298,14 +332,8 @@ CUSTOMIZATION_MENU = Menu(
             ),
         ),
         MenuGroup(
-            label=_('Reports & Scripts'),
+            label=_('Scripts'),
             items=(
-                MenuItem(
-                    link='extras:report_list',
-                    link_text=_('Reports'),
-                    permissions=['extras.view_report'],
-                    buttons=get_model_buttons('extras', "reportmodule", actions=['add'])
-                ),
                 MenuItem(
                     link='extras:script_list',
                     link_text=_('Scripts'),
@@ -325,6 +353,7 @@ OPERATIONS_MENU = Menu(
             label=_('Integrations'),
             items=(
                 get_model_item('core', 'datasource', _('Data Sources')),
+                get_model_item('extras', 'eventrule', _('Event Rules')),
                 get_model_item('extras', 'webhook', _('Webhooks')),
             ),
         ),
@@ -341,8 +370,9 @@ OPERATIONS_MENU = Menu(
         MenuGroup(
             label=_('Logging'),
             items=(
+                get_model_item('extras', 'notificationgroup', _('Notification Groups')),
                 get_model_item('extras', 'journalentry', _('Journal Entries'), actions=['import']),
-                get_model_item('extras', 'objectchange', _('Change Log'), actions=[]),
+                get_model_item('core', 'objectchange', _('Change Log'), actions=[]),
             ),
         ),
     ),
@@ -355,82 +385,85 @@ ADMIN_MENU = Menu(
         MenuGroup(
             label=_('Authentication'),
             items=(
-                # Proxy model for auth.User
                 MenuItem(
-                    link=f'users:netboxuser_list',
+                    link='users:user_list',
                     link_text=_('Users'),
-                    permissions=[f'auth.view_user'],
-                    staff_only=True,
+                    auth_required=True,
+                    permissions=['users.view_user'],
                     buttons=(
                         MenuItemButton(
-                            link=f'users:netboxuser_add',
+                            link='users:user_add',
                             title='Add',
                             icon_class='mdi mdi-plus-thick',
-                            permissions=[f'auth.add_user'],
-                            color=ButtonColorChoices.GREEN
+                            permissions=['users.add_user']
                         ),
                         MenuItemButton(
-                            link=f'users:netboxuser_import',
+                            link='users:user_import',
                             title='Import',
                             icon_class='mdi mdi-upload',
-                            permissions=[f'auth.add_user'],
-                            color=ButtonColorChoices.CYAN
+                            permissions=['users.add_user']
                         )
                     )
                 ),
-                # Proxy model for auth.Group
                 MenuItem(
-                    link=f'users:netboxgroup_list',
+                    link='users:group_list',
                     link_text=_('Groups'),
-                    permissions=[f'auth.view_group'],
-                    staff_only=True,
+                    auth_required=True,
+                    permissions=['users.view_group'],
                     buttons=(
                         MenuItemButton(
-                            link=f'users:netboxgroup_add',
+                            link='users:group_add',
                             title='Add',
                             icon_class='mdi mdi-plus-thick',
-                            permissions=[f'auth.add_group'],
-                            color=ButtonColorChoices.GREEN
+                            permissions=['users.add_group']
                         ),
                         MenuItemButton(
-                            link=f'users:netboxgroup_import',
+                            link='users:group_import',
                             title='Import',
                             icon_class='mdi mdi-upload',
-                            permissions=[f'auth.add_group'],
-                            color=ButtonColorChoices.CYAN
+                            permissions=['users.add_group']
                         )
                     )
                 ),
                 MenuItem(
-                    link=f'users:token_list',
+                    link='users:token_list',
                     link_text=_('API Tokens'),
-                    permissions=[f'users.view_token'],
-                    staff_only=True,
+                    auth_required=True,
+                    permissions=['users.view_token'],
                     buttons=get_model_buttons('users', 'token')
                 ),
                 MenuItem(
-                    link=f'users:objectpermission_list',
+                    link='users:objectpermission_list',
                     link_text=_('Permissions'),
-                    permissions=[f'users.view_objectpermission'],
-                    staff_only=True,
+                    auth_required=True,
+                    permissions=['users.view_objectpermission'],
                     buttons=get_model_buttons('users', 'objectpermission', actions=['add'])
                 ),
             ),
         ),
         MenuGroup(
-            label=_('Configuration'),
+            label=_('System'),
             items=(
                 MenuItem(
-                    link='core:config',
-                    link_text=_('Current Config'),
-                    permissions=['extras.view_configrevision'],
-                    staff_only=True
+                    link='core:system',
+                    link_text=_('System'),
+                    auth_required=True
                 ),
                 MenuItem(
-                    link='extras:configrevision_list',
-                    link_text=_('Config Revisions'),
-                    permissions=['extras.view_configrevision'],
-                    staff_only=True
+                    link='core:plugin_list',
+                    link_text=_('Plugins'),
+                    auth_required=True
+                ),
+                MenuItem(
+                    link='core:configrevision_list',
+                    link_text=_('Configuration History'),
+                    auth_required=True,
+                    permissions=['core.view_configrevision']
+                ),
+                MenuItem(
+                    link='core:background_queue_list',
+                    link_text=_('Background Tasks'),
+                    auth_required=True
                 ),
             ),
         ),
@@ -439,27 +472,25 @@ ADMIN_MENU = Menu(
 
 MENUS = [
     ORGANIZATION_MENU,
+    RACKS_MENU,
     DEVICES_MENU,
     CONNECTIONS_MENU,
     WIRELESS_MENU,
     IPAM_MENU,
-    OVERLAY_MENU,
+    VPN_MENU,
     VIRTUALIZATION_MENU,
     CIRCUITS_MENU,
     POWER_MENU,
     PROVISIONING_MENU,
     CUSTOMIZATION_MENU,
     OPERATIONS_MENU,
-    ADMIN_MENU,
 ]
 
-#
-# Add plugin menus
-#
-
+# Add top-level plugin menus
 for menu in registry['plugins']['menus']:
     MENUS.append(menu)
 
+# Add the default "plugins" menu
 if registry['plugins']['menu_items']:
 
     # Build the default plugins menu
@@ -473,3 +504,6 @@ if registry['plugins']['menu_items']:
         groups=groups
     )
     MENUS.append(plugins_menu)
+
+# Add the admin menu last
+MENUS.append(ADMIN_MENU)

@@ -5,8 +5,11 @@ from django.urls import reverse
 
 from circuits.choices import *
 from circuits.models import *
+from core.models import ObjectType
 from dcim.models import Cable, Interface, Site
 from ipam.models import ASN, RIR
+from netbox.choices import ImportFormatChoices
+from users.models import ObjectPermission
 from utilities.testing import ViewTestCases, create_tags, create_test_device
 
 
@@ -115,6 +118,7 @@ class CircuitTestCase(ViewTestCases.PrimaryObjectViewTestCase):
 
     @classmethod
     def setUpTestData(cls):
+        Site.objects.create(name='Site 1', slug='site-1')
 
         providers = (
             Provider(name='Provider 1', slug='provider-1'),
@@ -167,7 +171,7 @@ class CircuitTestCase(ViewTestCases.PrimaryObjectViewTestCase):
         )
 
         cls.csv_update_data = (
-            f"id,cid,description,status",
+            "id,cid,description,status",
             f"{circuits[0].pk},Circuit 7,New description7,{CircuitStatusChoices.STATUS_DECOMMISSIONED}",
             f"{circuits[1].pk},Circuit 8,New description8,{CircuitStatusChoices.STATUS_DECOMMISSIONED}",
             f"{circuits[2].pk},Circuit 9,New description9,{CircuitStatusChoices.STATUS_DECOMMISSIONED}",
@@ -183,6 +187,51 @@ class CircuitTestCase(ViewTestCases.PrimaryObjectViewTestCase):
             'description': 'New description',
             'comments': 'New comments',
         }
+
+    @override_settings(EXEMPT_VIEW_PERMISSIONS=['*'], EXEMPT_EXCLUDE_MODELS=[])
+    def test_bulk_import_objects_with_terminations(self):
+        json_data = """
+            [
+              {
+                "cid": "Circuit 7",
+                "provider": "Provider 1",
+                "type": "Circuit Type 1",
+                "status": "active",
+                "description": "Testing Import",
+                "terminations": [
+                  {
+                    "term_side": "A",
+                    "site": "Site 1"
+                  },
+                  {
+                    "term_side": "Z",
+                    "site": "Site 1"
+                  }
+                ]
+              }
+            ]
+        """
+        initial_count = self._get_queryset().count()
+        data = {
+            'data': json_data,
+            'format': ImportFormatChoices.JSON,
+        }
+
+        # Assign model-level permission
+        obj_perm = ObjectPermission(
+            name='Test permission',
+            actions=['add']
+        )
+        obj_perm.save()
+        obj_perm.users.add(self.user)
+        obj_perm.object_types.add(ObjectType.objects.get_for_model(self.model))
+
+        # Try GET with model-level permission
+        self.assertHttpStatus(self.client.get(self._get_url('import')), 200)
+
+        # Test POST with permission
+        self.assertHttpStatus(self.client.post(self._get_url('import'), data), 302)
+        self.assertEqual(self._get_queryset().count(), initial_count + 1)
 
 
 class ProviderAccountTestCase(ViewTestCases.PrimaryObjectViewTestCase):
@@ -287,10 +336,7 @@ class ProviderNetworkTestCase(ViewTestCases.PrimaryObjectViewTestCase):
         }
 
 
-class CircuitTerminationTestCase(
-    ViewTestCases.EditObjectViewTestCase,
-    ViewTestCases.DeleteObjectViewTestCase,
-):
+class CircuitTerminationTestCase(ViewTestCases.PrimaryObjectViewTestCase):
     model = CircuitTermination
 
     @classmethod
@@ -327,6 +373,24 @@ class CircuitTerminationTestCase(
             'description': 'New description',
         }
 
+        cls.csv_data = (
+            "circuit,term_side,site,description",
+            "Circuit 3,A,Site 1,Foo",
+            "Circuit 3,Z,Site 1,Bar",
+        )
+
+        cls.csv_update_data = (
+            "id,port_speed,description",
+            f"{circuit_terminations[0].pk},100,New description7",
+            f"{circuit_terminations[1].pk},200,New description8",
+            f"{circuit_terminations[2].pk},300,New description9",
+        )
+
+        cls.bulk_edit_data = {
+            'port_speed': 400,
+            'description': 'New description',
+        }
+
     @override_settings(EXEMPT_VIEW_PERMISSIONS=['*'])
     def test_trace(self):
         device = create_test_device('Device 1')
@@ -340,3 +404,109 @@ class CircuitTerminationTestCase(
 
         response = self.client.get(reverse('circuits:circuittermination_trace', kwargs={'pk': circuittermination.pk}))
         self.assertHttpStatus(response, 200)
+
+
+class CircuitGroupTestCase(ViewTestCases.OrganizationalObjectViewTestCase):
+    model = CircuitGroup
+
+    @classmethod
+    def setUpTestData(cls):
+
+        circuit_groups = (
+            CircuitGroup(name='Circuit Group 1', slug='circuit-group-1'),
+            CircuitGroup(name='Circuit Group 2', slug='circuit-group-2'),
+            CircuitGroup(name='Circuit Group 3', slug='circuit-group-3'),
+        )
+        CircuitGroup.objects.bulk_create(circuit_groups)
+
+        tags = create_tags('Alpha', 'Bravo', 'Charlie')
+
+        cls.form_data = {
+            'name': 'Circuit Group X',
+            'slug': 'circuit-group-x',
+            'description': 'A new Circuit Group',
+            'tags': [t.pk for t in tags],
+        }
+
+        cls.csv_data = (
+            "name,slug",
+            "Circuit Group 4,circuit-group-4",
+            "Circuit Group 5,circuit-group-5",
+            "Circuit Group 6,circuit-group-6",
+        )
+
+        cls.csv_update_data = (
+            "id,name,description",
+            f"{circuit_groups[0].pk},Circuit Group 7,New description7",
+            f"{circuit_groups[1].pk},Circuit Group 8,New description8",
+            f"{circuit_groups[2].pk},Circuit Group 9,New description9",
+        )
+
+        cls.bulk_edit_data = {
+            'description': 'Foo',
+        }
+
+
+class CircuitGroupAssignmentTestCase(
+    ViewTestCases.CreateObjectViewTestCase,
+    ViewTestCases.EditObjectViewTestCase,
+    ViewTestCases.DeleteObjectViewTestCase,
+    ViewTestCases.ListObjectsViewTestCase,
+    ViewTestCases.BulkEditObjectsViewTestCase,
+    ViewTestCases.BulkDeleteObjectsViewTestCase
+):
+    model = CircuitGroupAssignment
+
+    @classmethod
+    def setUpTestData(cls):
+
+        circuit_groups = (
+            CircuitGroup(name='Circuit Group 1', slug='circuit-group-1'),
+            CircuitGroup(name='Circuit Group 2', slug='circuit-group-2'),
+            CircuitGroup(name='Circuit Group 3', slug='circuit-group-3'),
+            CircuitGroup(name='Circuit Group 4', slug='circuit-group-4'),
+        )
+        CircuitGroup.objects.bulk_create(circuit_groups)
+
+        provider = Provider.objects.create(name='Provider 1', slug='provider-1')
+        circuittype = CircuitType.objects.create(name='Circuit Type 1', slug='circuit-type-1')
+
+        circuits = (
+            Circuit(cid='Circuit 1', provider=provider, type=circuittype),
+            Circuit(cid='Circuit 2', provider=provider, type=circuittype),
+            Circuit(cid='Circuit 3', provider=provider, type=circuittype),
+            Circuit(cid='Circuit 4', provider=provider, type=circuittype),
+        )
+        Circuit.objects.bulk_create(circuits)
+
+        assignments = (
+            CircuitGroupAssignment(
+                group=circuit_groups[0],
+                circuit=circuits[0],
+                priority=CircuitPriorityChoices.PRIORITY_PRIMARY
+            ),
+            CircuitGroupAssignment(
+                group=circuit_groups[1],
+                circuit=circuits[1],
+                priority=CircuitPriorityChoices.PRIORITY_SECONDARY
+            ),
+            CircuitGroupAssignment(
+                group=circuit_groups[2],
+                circuit=circuits[2],
+                priority=CircuitPriorityChoices.PRIORITY_TERTIARY
+            ),
+        )
+        CircuitGroupAssignment.objects.bulk_create(assignments)
+
+        tags = create_tags('Alpha', 'Bravo', 'Charlie')
+
+        cls.form_data = {
+            'group': circuit_groups[3].pk,
+            'circuit': circuits[3].pk,
+            'priority': CircuitPriorityChoices.PRIORITY_INACTIVE,
+            'tags': [t.pk for t in tags],
+        }
+
+        cls.bulk_edit_data = {
+            'priority': CircuitPriorityChoices.PRIORITY_INACTIVE,
+        }

@@ -85,17 +85,23 @@ Each model generally has two views associated with it: a list view and a detail 
 * `/api/dcim/devices/` - List existing devices or create a new device
 * `/api/dcim/devices/123/` - Retrieve, update, or delete the device with ID 123
 
-Lists of objects can be filtered using a set of query parameters. For example, to find all interfaces belonging to the device with ID 123:
+Lists of objects can be filtered and ordered using a set of query parameters. For example, to find all interfaces belonging to the device with ID 123:
 
 ```
 GET /api/dcim/interfaces/?device_id=123
 ```
 
-See the [filtering documentation](../reference/filtering.md) for more details.
+An optional `ordering` parameter can be used to define how to sort the results. Building off the previous example, to sort all the interfaces in reverse order of creation (newest to oldest) for a device with ID 123:
+
+```
+GET /api/dcim/interfaces/?device_id=123&ordering=-created
+```
+
+See the [filtering documentation](../reference/filtering.md) for more details on topics related to filtering, ordering and lookup expressions.
 
 ## Serialization
 
-The REST API employs two types of serializers to represent model data: base serializers and nested serializers. The base serializer is used to present the complete view of a model. This includes all database table fields which comprise the model, and may include additional metadata. A base serializer includes relationships to parent objects, but **does not** include child objects. For example, the `VLANSerializer` includes a nested representation its parent VLANGroup (if any), but does not include any assigned Prefixes.
+The REST API generally represents objects in one of two ways: complete or brief. The base serializer is used to present the complete view of an object. This includes all database table fields which comprise the model, and may include additional metadata. A base serializer includes relationships to parent objects, but **does not** include child objects. For example, the `VLANSerializer` includes a nested representation its parent VLANGroup (if any), but does not include any assigned Prefixes. Serializers employ a minimal "brief" representation of related objects, which includes only the attributes prudent for identifying the object.
 
 ```json
 {
@@ -133,7 +139,7 @@ The REST API employs two types of serializers to represent model data: base seri
 
 ### Related Objects
 
-Related objects (e.g. `ForeignKey` fields) are represented using nested serializers. A nested serializer provides a minimal representation of an object, including only its direct URL and enough information to display the object to a user. When performing write API actions (`POST`, `PUT`, and `PATCH`), related objects may be specified by either numeric ID (primary key), or by a set of attributes sufficiently unique to return the desired object.
+Related objects (e.g. `ForeignKey` fields) are included using nested brief representations. This is a minimal representation of an object, including only its direct URL and enough information to display the object to a user. When performing write API actions (`POST`, `PUT`, and `PATCH`), related objects may be specified by either numeric ID (primary key), or by a set of attributes sufficiently unique to return the desired object.
 
 For example, when creating a new device, its rack can be specified by NetBox ID (PK):
 
@@ -145,7 +151,7 @@ For example, when creating a new device, its rack can be specified by NetBox ID 
 }
 ```
 
-Or by a set of nested attributes which uniquely identify the rack:
+Or by a set of attributes which uniquely identify the rack:
 
 ```json
 {
@@ -647,18 +653,20 @@ Note that we are _not_ passing an existing REST API token with this request. If 
 {
     "id": 6,
     "url": "https://netbox/api/users/tokens/6/",
-    "display": "3c9cb9 (hankhill)",
+    "display": "**********************************3c9cb9",
     "user": {
         "id": 2,
         "url": "https://netbox/api/users/users/2/",
         "display": "hankhill",
         "username": "hankhill"
     },
-    "created": "2021-06-11T20:09:13.339367Z",
+    "created": "2024-03-11T20:09:13.339367Z",
     "expires": null,
+    "last_used": null,
     "key": "9fc9b897abec9ada2da6aec9dbc34596293c9cb9",
     "write_enabled": true,
-    "description": ""
+    "description": "",
+    "allowed_ips": []
 }
 ```
 

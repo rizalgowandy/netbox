@@ -1,11 +1,12 @@
 from django.contrib.contenttypes.fields import GenericForeignKey
-from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 
+from core.models import ObjectType
 from netbox.models import ChangeLoggedModel, NestedGroupModel, OrganizationalModel, PrimaryModel
-from netbox.models.features import TagsMixin
+from netbox.models.features import CustomFieldsMixin, ExportTemplatesMixin, TagsMixin
 from tenancy.choices import *
 
 __all__ = (
@@ -109,14 +110,14 @@ class Contact(PrimaryModel):
         return reverse('tenancy:contact', args=[self.pk])
 
 
-class ContactAssignment(ChangeLoggedModel, TagsMixin):
-    content_type = models.ForeignKey(
-        to=ContentType,
+class ContactAssignment(CustomFieldsMixin, ExportTemplatesMixin, TagsMixin, ChangeLoggedModel):
+    object_type = models.ForeignKey(
+        to='contenttypes.ContentType',
         on_delete=models.CASCADE
     )
     object_id = models.PositiveBigIntegerField()
     object = GenericForeignKey(
-        ct_field='content_type',
+        ct_field='object_type',
         fk_field='object_id'
     )
     contact = models.ForeignKey(
@@ -136,13 +137,16 @@ class ContactAssignment(ChangeLoggedModel, TagsMixin):
         blank=True
     )
 
-    clone_fields = ('content_type', 'object_id', 'role', 'priority')
+    clone_fields = ('object_type', 'object_id', 'role', 'priority')
 
     class Meta:
-        ordering = ('priority', 'contact')
+        ordering = ('contact', 'priority', 'role', 'pk')
+        indexes = (
+            models.Index(fields=('object_type', 'object_id')),
+        )
         constraints = (
             models.UniqueConstraint(
-                fields=('content_type', 'object_id', 'contact', 'role'),
+                fields=('object_type', 'object_id', 'contact', 'role'),
                 name='%(app_label)s_%(class)s_unique_object_contact_role'
             ),
         )
@@ -156,6 +160,15 @@ class ContactAssignment(ChangeLoggedModel, TagsMixin):
 
     def get_absolute_url(self):
         return reverse('tenancy:contact', args=[self.contact.pk])
+
+    def clean(self):
+        super().clean()
+
+        # Validate the assigned object type
+        if self.object_type not in ObjectType.objects.with_feature('contacts'):
+            raise ValidationError(
+                _("Contacts cannot be assigned to this object type ({type}).").format(type=self.object_type)
+            )
 
     def to_objectchange(self, action):
         objectchange = super().to_objectchange(action)

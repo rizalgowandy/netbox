@@ -38,9 +38,18 @@ The type of data this field holds. This must be one of the following:
 | Object             | A single NetBox object of the type defined by `object_type`        |
 | Multiple object    | One or more NetBox objects of the type defined by `object_type`    |
 
-### Object Type
+### Related Object Type
 
 For object and multiple-object fields only. Designates the type of NetBox object being referenced.
+
+### Related Object Filter
+
+!!! info "This field was introduced in NetBox v4.1."
+
+For object and multi-object custom fields, a filter may be defined to limit the available objects when populating a field value. This filter maps object attributes to values. For example, `{"status": "active"}` will include only objects with a status of "active."
+
+!!! warning
+    This setting is employed for convenience only, and should not be relied upon to enforce data integrity.
 
 ### Weight
 
@@ -48,7 +57,11 @@ A numeric weight used to override alphabetic ordering of fields by name. Custom 
 
 ### Required
 
-If checked, this custom field must be populated with a valid value for the object to pass validation.
+If enabled, this custom field must be populated with a valid value for the object to pass validation.
+
+### Unique
+
+If enabled, each object must have a unique value set for this custom field (per object type).
 
 ### Description
 
@@ -64,16 +77,25 @@ Defines how filters are evaluated against custom field values.
 | Loose    | Match any occurrence of the value   |
 | Exact    | Match only the complete field value |
 
-### UI Visibility
+### UI Visible
 
-Controls how and whether the custom field is displayed within the NetBox user interface.
+Controls whether the custom field is displayed for objects within the NetBox user interface.
 
-| Option            | Description                                      |
-|-------------------|--------------------------------------------------|
-| Read/write        | Display and permit editing (default)             |
-| Read-only         | Display field but disallow editing               |
-| Hidden            | Do not display field in the UI                   |
-| Hidden (if unset) | Display in the UI only when a value has been set |
+| Option | Description                                                    |
+|--------|----------------------------------------------------------------|
+| Always | The field is always displayed when viewing an object (default) |
+| If set | The field is displayed only if a value has been defined        |
+| Hidden | The field is not displayed when viewing an object              |
+
+### UI Editable
+
+Controls whether the custom field is editable on objects within the NetBox user interface.
+
+| Option | Description                                                                  |
+|--------|------------------------------------------------------------------------------|
+| Yes    | The field's value may be changed when editing an object (default)            |
+| No     | The field's value is displayed when editing an object but may not be altered |
+| Hidden | The field is not displayed when editing an object                            |
 
 ### Default
 

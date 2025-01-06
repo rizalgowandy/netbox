@@ -9,7 +9,7 @@ from dcim.choices import *
 from dcim.constants import *
 from dcim.models import *
 from extras.models import ConfigTemplate
-from ipam.models import VRF
+from ipam.models import VRF, IPAddress
 from netbox.forms import NetBoxModelImportForm
 from tenancy.models import Tenant
 from utilities.forms.fields import (
@@ -45,6 +45,7 @@ __all__ = (
     'RackImportForm',
     'RackReservationImportForm',
     'RackRoleImportForm',
+    'RackTypeImportForm',
     'RearPortImportForm',
     'RegionImportForm',
     'SiteImportForm',
@@ -157,7 +158,15 @@ class LocationImportForm(NetBoxModelImportForm):
 
     class Meta:
         model = Location
-        fields = ('site', 'parent', 'name', 'slug', 'status', 'tenant', 'description', 'tags')
+        fields = ('site', 'parent', 'name', 'slug', 'status', 'tenant', 'facility', 'description', 'tags')
+
+    def __init__(self, data=None, *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
+
+        if data:
+            # Limit location queryset by assigned site
+            params = {f"site__{self.fields['site'].to_field_name}": data.get('site')}
+            self.fields['parent'].queryset = self.fields['parent'].queryset.filter(**params)
 
 
 class RackRoleImportForm(NetBoxModelImportForm):
@@ -166,9 +175,54 @@ class RackRoleImportForm(NetBoxModelImportForm):
     class Meta:
         model = RackRole
         fields = ('name', 'slug', 'color', 'description', 'tags')
-        help_texts = {
-            'color': mark_safe(_('RGB color in hexadecimal. Example:') + ' <code>00ff00</code>'),
-        }
+
+
+class RackTypeImportForm(NetBoxModelImportForm):
+    manufacturer = forms.ModelChoiceField(
+        label=_('Manufacturer'),
+        queryset=Manufacturer.objects.all(),
+        to_field_name='name',
+        help_text=_('The manufacturer of this rack type')
+    )
+    form_factor = CSVChoiceField(
+        label=_('Type'),
+        choices=RackFormFactorChoices,
+        required=False,
+        help_text=_('Form factor')
+    )
+    starting_unit = forms.IntegerField(
+        required=False,
+        min_value=1,
+        help_text=_('The lowest-numbered position in the rack')
+    )
+    width = forms.ChoiceField(
+        label=_('Width'),
+        choices=RackWidthChoices,
+        help_text=_('Rail-to-rail width (in inches)')
+    )
+    outer_unit = CSVChoiceField(
+        label=_('Outer unit'),
+        choices=RackDimensionUnitChoices,
+        required=False,
+        help_text=_('Unit for outer dimensions')
+    )
+    weight_unit = CSVChoiceField(
+        label=_('Weight unit'),
+        choices=WeightUnitChoices,
+        required=False,
+        help_text=_('Unit for rack weights')
+    )
+
+    class Meta:
+        model = RackType
+        fields = (
+            'manufacturer', 'model', 'slug', 'form_factor', 'width', 'u_height', 'starting_unit', 'desc_units',
+            'outer_width', 'outer_depth', 'outer_unit', 'mounting_depth', 'weight', 'max_weight',
+            'weight_unit', 'description', 'comments', 'tags',
+        )
+
+    def __init__(self, data=None, *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
 
 
 class RackImportForm(NetBoxModelImportForm):
@@ -202,22 +256,40 @@ class RackImportForm(NetBoxModelImportForm):
         to_field_name='name',
         help_text=_('Name of assigned role')
     )
-    type = CSVChoiceField(
-        label=_('Type'),
-        choices=RackTypeChoices,
+    rack_type = CSVModelChoiceField(
+        label=_('Rack type'),
+        queryset=RackType.objects.all(),
+        to_field_name='model',
         required=False,
-        help_text=_('Rack type')
+        help_text=_('Rack type model')
+    )
+    form_factor = CSVChoiceField(
+        label=_('Type'),
+        choices=RackFormFactorChoices,
+        required=False,
+        help_text=_('Form factor')
     )
     width = forms.ChoiceField(
         label=_('Width'),
         choices=RackWidthChoices,
+        required=False,
         help_text=_('Rail-to-rail width (in inches)')
+    )
+    u_height = forms.IntegerField(
+        required=False,
+        label=_('Height (U)')
     )
     outer_unit = CSVChoiceField(
         label=_('Outer unit'),
         choices=RackDimensionUnitChoices,
         required=False,
         help_text=_('Unit for outer dimensions')
+    )
+    airflow = CSVChoiceField(
+        label=_('Airflow'),
+        choices=RackAirflowChoices,
+        required=False,
+        help_text=_('Airflow direction')
     )
     weight_unit = CSVChoiceField(
         label=_('Weight unit'),
@@ -229,9 +301,9 @@ class RackImportForm(NetBoxModelImportForm):
     class Meta:
         model = Rack
         fields = (
-            'site', 'location', 'name', 'facility_id', 'tenant', 'status', 'role', 'type', 'serial', 'asset_tag',
-            'width', 'u_height', 'desc_units', 'outer_width', 'outer_depth', 'outer_unit', 'mounting_depth', 'weight',
-            'max_weight', 'weight_unit', 'description', 'comments', 'tags',
+            'site', 'location', 'name', 'facility_id', 'tenant', 'status', 'role', 'rack_type', 'form_factor', 'serial',
+            'asset_tag', 'width', 'u_height', 'desc_units', 'outer_width', 'outer_depth', 'outer_unit',
+            'mounting_depth', 'airflow', 'weight', 'max_weight', 'weight_unit', 'description', 'comments', 'tags',
         )
 
     def __init__(self, data=None, *args, **kwargs):
@@ -242,6 +314,16 @@ class RackImportForm(NetBoxModelImportForm):
             # Limit location queryset by assigned site
             params = {f"site__{self.fields['site'].to_field_name}": data.get('site')}
             self.fields['location'].queryset = self.fields['location'].queryset.filter(**params)
+
+    def clean(self):
+        super().clean()
+
+        # width & u_height must be set if not specifying a rack type on import
+        if not self.instance.pk:
+            if not self.cleaned_data.get('rack_type') and not self.cleaned_data.get('width'):
+                raise forms.ValidationError(_("Width must be set if not specifying a rack type."))
+            if not self.cleaned_data.get('rack_type') and not self.cleaned_data.get('u_height'):
+                raise forms.ValidationError(_("U height must be set if not specifying a rack type."))
 
 
 class RackReservationImportForm(NetBoxModelImportForm):
@@ -307,13 +389,13 @@ class ManufacturerImportForm(NetBoxModelImportForm):
 
 
 class DeviceTypeImportForm(NetBoxModelImportForm):
-    manufacturer = forms.ModelChoiceField(
+    manufacturer = CSVModelChoiceField(
         label=_('Manufacturer'),
         queryset=Manufacturer.objects.all(),
         to_field_name='name',
         help_text=_('The manufacturer which produces this device type')
     )
-    default_platform = forms.ModelChoiceField(
+    default_platform = CSVModelChoiceField(
         label=_('Default platform'),
         queryset=Platform.objects.all(),
         to_field_name='name',
@@ -335,8 +417,8 @@ class DeviceTypeImportForm(NetBoxModelImportForm):
     class Meta:
         model = DeviceType
         fields = [
-            'manufacturer', 'default_platform', 'model', 'slug', 'part_number', 'u_height', 'is_full_depth',
-            'subdevice_role', 'airflow', 'description', 'weight', 'weight_unit', 'comments', 'tags',
+            'manufacturer', 'default_platform', 'model', 'slug', 'part_number', 'u_height', 'exclude_from_utilization',
+            'is_full_depth', 'subdevice_role', 'airflow', 'description', 'weight', 'weight_unit', 'comments', 'tags',
         ]
 
 
@@ -345,6 +427,12 @@ class ModuleTypeImportForm(NetBoxModelImportForm):
         label=_('Manufacturer'),
         queryset=Manufacturer.objects.all(),
         to_field_name='name'
+    )
+    airflow = CSVChoiceField(
+        label=_('Airflow'),
+        choices=ModuleAirflowChoices,
+        required=False,
+        help_text=_('Airflow direction')
     )
     weight = forms.DecimalField(
         label=_('Weight'),
@@ -360,7 +448,7 @@ class ModuleTypeImportForm(NetBoxModelImportForm):
 
     class Meta:
         model = ModuleType
-        fields = ['manufacturer', 'model', 'part_number', 'description', 'weight', 'weight_unit', 'comments', 'tags']
+        fields = ['manufacturer', 'model', 'part_number', 'description', 'airflow', 'weight', 'weight_unit', 'comments', 'tags']
 
 
 class DeviceRoleImportForm(NetBoxModelImportForm):
@@ -376,9 +464,6 @@ class DeviceRoleImportForm(NetBoxModelImportForm):
     class Meta:
         model = DeviceRole
         fields = ('name', 'slug', 'color', 'vm_role', 'config_template', 'description', 'tags')
-        help_texts = {
-            'color': mark_safe(_('RGB color in hexadecimal. Example:') + ' <code>00ff00</code>'),
-        }
 
 
 class PlatformImportForm(NetBoxModelImportForm):
@@ -727,7 +812,7 @@ class PowerOutletImportForm(NetBoxModelImportForm):
         help_text=_('Local power port which feeds this outlet')
     )
     feed_leg = CSVChoiceField(
-        label=_('Feed lag'),
+        label=_('Feed leg'),
         choices=PowerOutletFeedLegChoices,
         required=False,
         help_text=_('Electrical phase (for three-phase circuits)')
@@ -870,7 +955,11 @@ class InterfaceImportForm(NetBoxModelImportForm):
     def clean_vdcs(self):
         for vdc in self.cleaned_data['vdcs']:
             if vdc.device != self.cleaned_data['device']:
-                raise forms.ValidationError(f"VDC {vdc} is not assigned to device {self.cleaned_data['device']}")
+                raise forms.ValidationError(
+                    _("VDC {vdc} is not assigned to device {device}").format(
+                        vdc=vdc, device=self.cleaned_data['device']
+                    )
+                )
         return self.cleaned_data['vdcs']
 
 
@@ -996,7 +1085,7 @@ class DeviceBayImportForm(NetBoxModelImportForm):
                 device_type__subdevice_role=SubdeviceRoleChoices.ROLE_CHILD
             ).exclude(pk=device.pk)
         else:
-            self.fields['installed_device'].queryset = Interface.objects.none()
+            self.fields['installed_device'].queryset = Device.objects.none()
 
 
 class InventoryItemImportForm(NetBoxModelImportForm):
@@ -1040,7 +1129,7 @@ class InventoryItemImportForm(NetBoxModelImportForm):
     class Meta:
         model = InventoryItem
         fields = (
-            'device', 'name', 'label', 'role', 'manufacturer', 'part_id', 'serial', 'asset_tag', 'discovered',
+            'device', 'name', 'label', 'role', 'manufacturer', 'parent', 'part_id', 'serial', 'asset_tag', 'discovered',
             'description', 'tags', 'component_type', 'component_name',
         )
 
@@ -1075,7 +1164,11 @@ class InventoryItemImportForm(NetBoxModelImportForm):
             component = model.objects.get(device=device, name=component_name)
             self.instance.component = component
         except ObjectDoesNotExist:
-            raise forms.ValidationError(f"Component not found: {device} - {component_name}")
+            raise forms.ValidationError(
+                _("Component not found: {device} - {component_name}").format(
+                    device=device, component_name=component_name
+                )
+            )
 
 
 #
@@ -1088,9 +1181,6 @@ class InventoryItemRoleImportForm(NetBoxModelImportForm):
     class Meta:
         model = InventoryItemRole
         fields = ('name', 'slug', 'color', 'description')
-        help_texts = {
-            'color': mark_safe(_('RGB color in hexadecimal. Example:') + ' <code>00ff00</code>'),
-        }
 
 
 #
@@ -1167,9 +1257,6 @@ class CableImportForm(NetBoxModelImportForm):
             'side_a_device', 'side_a_type', 'side_a_name', 'side_b_device', 'side_b_type', 'side_b_name', 'type',
             'status', 'tenant', 'label', 'color', 'length', 'length_unit', 'description', 'comments', 'tags',
         ]
-        help_texts = {
-            'color': mark_safe(_('RGB color in hexadecimal. Example:') + ' <code>00ff00</code>'),
-        }
 
     def _clean_side(self, side):
         """
@@ -1193,10 +1280,17 @@ class CableImportForm(NetBoxModelImportForm):
             else:
                 termination_object = model.objects.get(device=device, name=name)
             if termination_object.cable is not None and termination_object.cable != self.instance:
-                raise forms.ValidationError(f"Side {side.upper()}: {device} {termination_object} is already connected")
+                raise forms.ValidationError(
+                    _("Side {side_upper}: {device} {termination_object} is already connected").format(
+                        side_upper=side.upper(), device=device, termination_object=termination_object
+                    )
+                )
         except ObjectDoesNotExist:
-            raise forms.ValidationError(f"{side.upper()} side termination not found: {device} {name}")
-
+            raise forms.ValidationError(
+                _("{side_upper} side termination not found: {device} {name}").format(
+                    side_upper=side.upper(), device=device, name=name
+                )
+            )
         setattr(self.instance, f'{side}_terminations', [termination_object])
         return termination_object
 
@@ -1350,18 +1444,46 @@ class VirtualDeviceContextImportForm(NetBoxModelImportForm):
         label=_('Device'),
         queryset=Device.objects.all(),
         to_field_name='name',
-        help_text='Assigned role'
+        help_text=_('Assigned role')
     )
     tenant = CSVModelChoiceField(
         label=_('Tenant'),
         queryset=Tenant.objects.all(),
         required=False,
         to_field_name='name',
-        help_text='Assigned tenant'
+        help_text=_('Assigned tenant')
+    )
+    status = CSVChoiceField(
+        label=_('Status'),
+        choices=VirtualDeviceContextStatusChoices,
+    )
+    primary_ip4 = CSVModelChoiceField(
+        label=_('Primary IPv4'),
+        queryset=IPAddress.objects.all(),
+        required=False,
+        to_field_name='address',
+        help_text=_('IPv4 address with mask, e.g. 1.2.3.4/24')
+    )
+    primary_ip6 = CSVModelChoiceField(
+        label=_('Primary IPv6'),
+        queryset=IPAddress.objects.all(),
+        required=False,
+        to_field_name='address',
+        help_text=_('IPv6 address with prefix length, e.g. 2001:db8::1/64')
     )
 
     class Meta:
         fields = [
-            'name', 'device', 'status', 'tenant', 'identifier', 'comments',
+            'name', 'device', 'status', 'tenant', 'identifier', 'comments', 'primary_ip4', 'primary_ip6',
         ]
         model = VirtualDeviceContext
+
+    def __init__(self, data=None, *args, **kwargs):
+        super().__init__(data, *args, **kwargs)
+
+        if data:
+
+            # Limit primary_ip4/ip6 querysets by assigned device
+            params = {f"interface__device__{self.fields['device'].to_field_name}": data.get('device')}
+            self.fields['primary_ip4'].queryset = self.fields['primary_ip4'].queryset.filter(**params)
+            self.fields['primary_ip6'].queryset = self.fields['primary_ip6'].queryset.filter(**params)

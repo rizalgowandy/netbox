@@ -1,12 +1,12 @@
-from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
-from django.contrib.contenttypes.models import ContentType
+import warnings
+
 from drf_spectacular.utils import extend_schema_field
-from drf_spectacular.types import OpenApiTypes
 from rest_framework import serializers
 
+from core.models import ObjectType
 from netbox.api.fields import ContentTypeField
 from netbox.api.serializers import WritableNestedSerializer
+from serializers_.nested import NestedGroupSerializer, NestedUserSerializer
 from users.models import ObjectPermission, Token
 
 __all__ = [
@@ -16,41 +16,23 @@ __all__ = [
     'NestedUserSerializer',
 ]
 
-
-class NestedGroupSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='users-api:group-detail')
-
-    class Meta:
-        model = Group
-        fields = ['id', 'url', 'display', 'name']
-
-
-class NestedUserSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='users-api:user-detail')
-
-    class Meta:
-        model = get_user_model()
-        fields = ['id', 'url', 'display', 'username']
-
-    @extend_schema_field(OpenApiTypes.STR)
-    def get_display(self, obj):
-        if full_name := obj.get_full_name():
-            return f"{obj.username} ({full_name})"
-        return obj.username
+# TODO: Remove in v4.2
+warnings.warn(
+    "Dedicated nested serializers will be removed in NetBox v4.2. Use Serializer(nested=True) instead.",
+    DeprecationWarning
+)
 
 
 class NestedTokenSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='users-api:token-detail')
 
     class Meta:
         model = Token
-        fields = ['id', 'url', 'display', 'key', 'write_enabled']
+        fields = ['id', 'url', 'display_url', 'display', 'key', 'write_enabled']
 
 
 class NestedObjectPermissionSerializer(WritableNestedSerializer):
-    url = serializers.HyperlinkedIdentityField(view_name='users-api:objectpermission-detail')
     object_types = ContentTypeField(
-        queryset=ContentType.objects.all(),
+        queryset=ObjectType.objects.all(),
         many=True
     )
     groups = serializers.SerializerMethodField(read_only=True)
@@ -58,7 +40,9 @@ class NestedObjectPermissionSerializer(WritableNestedSerializer):
 
     class Meta:
         model = ObjectPermission
-        fields = ['id', 'url', 'display', 'name', 'enabled', 'object_types', 'groups', 'users', 'actions']
+        fields = [
+            'id', 'url', 'display_url', 'display', 'name', 'enabled', 'object_types', 'groups', 'users', 'actions'
+        ]
 
     @extend_schema_field(serializers.ListField)
     def get_groups(self, obj):

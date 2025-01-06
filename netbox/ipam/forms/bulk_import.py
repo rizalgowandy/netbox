@@ -1,6 +1,5 @@
 from django import forms
 from django.contrib.contenttypes.models import ContentType
-from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 
 from dcim.models import Device, Interface, Site
@@ -10,7 +9,8 @@ from ipam.models import *
 from netbox.forms import NetBoxModelImportForm
 from tenancy.models import Tenant
 from utilities.forms.fields import (
-    CSVChoiceField, CSVContentTypeField, CSVModelChoiceField, CSVModelMultipleChoiceField, SlugField
+    CSVChoiceField, CSVContentTypeField, CSVModelChoiceField, CSVModelMultipleChoiceField, SlugField,
+    NumericRangeArrayField,
 )
 from virtualization.models import VirtualMachine, VMInterface
 
@@ -21,8 +21,6 @@ __all__ = (
     'FHRPGroupImportForm',
     'IPAddressImportForm',
     'IPRangeImportForm',
-    'L2VPNImportForm',
-    'L2VPNTerminationImportForm',
     'PrefixImportForm',
     'RIRImportForm',
     'RoleImportForm',
@@ -328,12 +326,17 @@ class IPAddressImportForm(NetBoxModelImportForm):
         help_text=_('Make this the primary IP for the assigned device'),
         required=False
     )
+    is_oob = forms.BooleanField(
+        label=_('Is out-of-band'),
+        help_text=_('Designate this as the out-of-band IP address for the assigned device'),
+        required=False
+    )
 
     class Meta:
         model = IPAddress
         fields = [
             'address', 'vrf', 'tenant', 'status', 'role', 'device', 'virtual_machine', 'interface', 'is_primary',
-            'dns_name', 'description', 'comments', 'tags',
+            'is_oob', 'dns_name', 'description', 'comments', 'tags',
         ]
 
     def __init__(self, data=None, *args, **kwargs):
@@ -347,7 +350,7 @@ class IPAddressImportForm(NetBoxModelImportForm):
                     **{f"device__{self.fields['device'].to_field_name}": data['device']}
                 )
 
-            # Limit interface queryset by assigned device
+            # Limit interface queryset by assigned VM
             elif data.get('virtual_machine'):
                 self.fields['interface'].queryset = VMInterface.objects.filter(
                     **{f"virtual_machine__{self.fields['virtual_machine'].to_field_name}": data['virtual_machine']}
@@ -360,15 +363,28 @@ class IPAddressImportForm(NetBoxModelImportForm):
         virtual_machine = self.cleaned_data.get('virtual_machine')
         interface = self.cleaned_data.get('interface')
         is_primary = self.cleaned_data.get('is_primary')
+        is_oob = self.cleaned_data.get('is_oob')
 
-        # Validate is_primary
+        # Validate is_primary and is_oob
         if is_primary and not device and not virtual_machine:
             raise forms.ValidationError({
                 "is_primary": _("No device or virtual machine specified; cannot set as primary IP")
             })
+        if is_oob and not device:
+            raise forms.ValidationError({
+                "is_oob": _("No device specified; cannot set as out-of-band IP")
+            })
+        if is_oob and virtual_machine:
+            raise forms.ValidationError({
+                "is_oob": _("Cannot set out-of-band IP for virtual machines")
+            })
         if is_primary and not interface:
             raise forms.ValidationError({
                 "is_primary": _("No interface specified; cannot set as primary IP")
+            })
+        if is_oob and not interface:
+            raise forms.ValidationError({
+                "is_oob": _("No interface specified; cannot set as out-of-band IP")
             })
 
     def save(self, *args, **kwargs):
@@ -381,11 +397,17 @@ class IPAddressImportForm(NetBoxModelImportForm):
 
         # Set as primary for device/VM
         if self.cleaned_data.get('is_primary'):
-            parent = self.cleaned_data['device'] or self.cleaned_data['virtual_machine']
+            parent = self.cleaned_data.get('device') or self.cleaned_data.get('virtual_machine')
             if self.instance.address.version == 4:
                 parent.primary_ip4 = ipaddress
             elif self.instance.address.version == 6:
                 parent.primary_ip6 = ipaddress
+            parent.save()
+
+        # Set as OOB for device
+        if self.cleaned_data.get('is_oob'):
+            parent = self.cleaned_data.get('device')
+            parent.oob_ip = ipaddress
             parent.save()
 
         return ipaddress
@@ -414,22 +436,13 @@ class VLANGroupImportForm(NetBoxModelImportForm):
         required=False,
         label=_('Scope type (app & model)')
     )
-    min_vid = forms.IntegerField(
-        min_value=VLAN_VID_MIN,
-        max_value=VLAN_VID_MAX,
-        required=False,
-        label=_('Minimum child VLAN VID (default: {minimum})').format(minimum=VLAN_VID_MIN)
-    )
-    max_vid = forms.IntegerField(
-        min_value=VLAN_VID_MIN,
-        max_value=VLAN_VID_MAX,
-        required=False,
-        label=_('Maximum child VLAN VID (default: {maximum})').format(maximum=VLAN_VID_MIN)
+    vid_ranges = NumericRangeArrayField(
+        required=False
     )
 
     class Meta:
         model = VLANGroup
-        fields = ('name', 'slug', 'scope_type', 'scope_id', 'min_vid', 'max_vid', 'description', 'tags')
+        fields = ('name', 'slug', 'scope_type', 'scope_id', 'vid_ranges', 'description', 'tags')
         labels = {
             'scope_id': 'Scope ID',
         }
@@ -507,96 +520,25 @@ class ServiceImportForm(NetBoxModelImportForm):
         choices=ServiceProtocolChoices,
         help_text=_('IP protocol')
     )
+    ipaddresses = CSVModelMultipleChoiceField(
+        queryset=IPAddress.objects.all(),
+        required=False,
+        to_field_name='address',
+        help_text=_('IP Address'),
+    )
 
     class Meta:
         model = Service
-        fields = ('device', 'virtual_machine', 'name', 'protocol', 'ports', 'description', 'comments', 'tags')
+        fields = (
+            'device', 'virtual_machine', 'ipaddresses', 'name', 'protocol', 'ports', 'description', 'comments', 'tags',
+        )
 
-
-class L2VPNImportForm(NetBoxModelImportForm):
-    tenant = CSVModelChoiceField(
-        label=_('Tenant'),
-        queryset=Tenant.objects.all(),
-        required=False,
-        to_field_name='name',
-    )
-    type = CSVChoiceField(
-        label=_('Type'),
-        choices=L2VPNTypeChoices,
-        help_text=_('L2VPN type')
-    )
-
-    class Meta:
-        model = L2VPN
-        fields = ('identifier', 'name', 'slug', 'tenant', 'type', 'description',
-                  'comments', 'tags')
-
-
-class L2VPNTerminationImportForm(NetBoxModelImportForm):
-    l2vpn = CSVModelChoiceField(
-        queryset=L2VPN.objects.all(),
-        required=True,
-        to_field_name='name',
-        label=_('L2VPN'),
-    )
-    device = CSVModelChoiceField(
-        label=_('Device'),
-        queryset=Device.objects.all(),
-        required=False,
-        to_field_name='name',
-        help_text=_('Parent device (for interface)')
-    )
-    virtual_machine = CSVModelChoiceField(
-        label=_('Virtual machine'),
-        queryset=VirtualMachine.objects.all(),
-        required=False,
-        to_field_name='name',
-        help_text=_('Parent virtual machine (for interface)')
-    )
-    interface = CSVModelChoiceField(
-        label=_('Interface'),
-        queryset=Interface.objects.none(),  # Can also refer to VMInterface
-        required=False,
-        to_field_name='name',
-        help_text=_('Assigned interface (device or VM)')
-    )
-    vlan = CSVModelChoiceField(
-        label=_('VLAN'),
-        queryset=VLAN.objects.all(),
-        required=False,
-        to_field_name='name',
-        help_text=_('Assigned VLAN')
-    )
-
-    class Meta:
-        model = L2VPNTermination
-        fields = ('l2vpn', 'device', 'virtual_machine', 'interface', 'vlan', 'tags')
-
-    def __init__(self, data=None, *args, **kwargs):
-        super().__init__(data, *args, **kwargs)
-
-        if data:
-
-            # Limit interface queryset by device or VM
-            if data.get('device'):
-                self.fields['interface'].queryset = Interface.objects.filter(
-                    **{f"device__{self.fields['device'].to_field_name}": data['device']}
-                )
-            elif data.get('virtual_machine'):
-                self.fields['interface'].queryset = VMInterface.objects.filter(
-                    **{f"virtual_machine__{self.fields['virtual_machine'].to_field_name}": data['virtual_machine']}
+    def clean_ipaddresses(self):
+        parent = self.cleaned_data.get('device') or self.cleaned_data.get('virtual_machine')
+        for ip_address in self.cleaned_data['ipaddresses']:
+            if not ip_address.assigned_object or getattr(ip_address.assigned_object, 'parent_object') != parent:
+                raise forms.ValidationError(
+                    _("{ip} is not assigned to this device/VM.").format(ip=ip_address)
                 )
 
-    def clean(self):
-        super().clean()
-
-        if self.cleaned_data.get('device') and self.cleaned_data.get('virtual_machine'):
-            raise ValidationError(_('Cannot import device and VM interface terminations simultaneously.'))
-        if not self.instance and not (self.cleaned_data.get('interface') or self.cleaned_data.get('vlan')):
-            raise ValidationError(_('Each termination must specify either an interface or a VLAN.'))
-        if self.cleaned_data.get('interface') and self.cleaned_data.get('vlan'):
-            raise ValidationError(_('Cannot assign both an interface and a VLAN.'))
-
-        # if this is an update we might not have interface or vlan in the form data
-        if self.cleaned_data.get('interface') or self.cleaned_data.get('vlan'):
-            self.instance.assigned_object = self.cleaned_data.get('interface') or self.cleaned_data.get('vlan')
+        return self.cleaned_data['ipaddresses']

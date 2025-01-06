@@ -1,7 +1,6 @@
 from functools import cached_property
 
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
-from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -13,8 +12,8 @@ from mptt.models import MPTTModel, TreeForeignKey
 from dcim.choices import *
 from dcim.constants import *
 from dcim.fields import MACAddressField, WWNField
+from netbox.choices import ColorChoices
 from netbox.models import OrganizationalModel, NetBoxModel
-from utilities.choices import ColorChoices
 from utilities.fields import ColorField, NaturalOrderingField
 from utilities.mptt import TreeManager
 from utilities.ordering import naturalize_interface
@@ -22,7 +21,6 @@ from utilities.query_functions import CollateAsChar
 from utilities.tracking import TrackingModelMixin
 from wireless.choices import *
 from wireless.utils import get_channel_attr
-
 
 __all__ = (
     'BaseInterface',
@@ -537,7 +535,7 @@ class BaseInterface(models.Model):
     )
     parent = models.ForeignKey(
         to='self',
-        on_delete=models.SET_NULL,
+        on_delete=models.RESTRICT,
         related_name='child_interfaces',
         null=True,
         blank=True,
@@ -562,10 +560,14 @@ class BaseInterface(models.Model):
             self.untagged_vlan = None
 
         # Only "tagged" interfaces may have tagged VLANs assigned. ("tagged all" implies all VLANs are assigned.)
-        if self.pk and self.mode != InterfaceModeChoices.MODE_TAGGED:
+        if not self._state.adding and self.mode != InterfaceModeChoices.MODE_TAGGED:
             self.tagged_vlans.clear()
 
         return super().save(*args, **kwargs)
+
+    @property
+    def tunnel_termination(self):
+        return self.tunnel_terminations.first()
 
     @property
     def count_ipaddresses(self):
@@ -720,8 +722,14 @@ class Interface(ModularComponentModel, BaseInterface, CabledObjectModel, PathEnd
         object_id_field='interface_id',
         related_query_name='+'
     )
+    tunnel_terminations = GenericRelation(
+        to='vpn.TunnelTermination',
+        content_type_field='termination_type',
+        object_id_field='termination_id',
+        related_query_name='interface'
+    )
     l2vpn_terminations = GenericRelation(
-        to='ipam.L2VPNTermination',
+        to='vpn.L2VPNTermination',
         content_type_field='assigned_object_type',
         object_id_field='assigned_object_id',
         related_query_name='interface',
@@ -1063,7 +1071,7 @@ class RearPort(ModularComponentModel, CabledObjectModel, TrackingModelMixin):
         super().clean()
 
         # Check that positions count is greater than or equal to the number of associated FrontPorts
-        if self.pk:
+        if not self._state.adding:
             frontport_count = self.frontports.count()
             if self.positions < frontport_count:
                 raise ValidationError({
@@ -1078,10 +1086,19 @@ class RearPort(ModularComponentModel, CabledObjectModel, TrackingModelMixin):
 # Bays
 #
 
-class ModuleBay(ComponentModel, TrackingModelMixin):
+class ModuleBay(ModularComponentModel, TrackingModelMixin, MPTTModel):
     """
     An empty space within a Device which can house a child device
     """
+    parent = TreeForeignKey(
+        to='self',
+        on_delete=models.CASCADE,
+        related_name='children',
+        blank=True,
+        null=True,
+        editable=False,
+        db_index=True
+    )
     position = models.CharField(
         verbose_name=_('position'),
         max_length=30,
@@ -1089,14 +1106,44 @@ class ModuleBay(ComponentModel, TrackingModelMixin):
         help_text=_('Identifier to reference when renaming installed components')
     )
 
+    objects = TreeManager()
+
     clone_fields = ('device',)
 
-    class Meta(ComponentModel.Meta):
+    class Meta(ModularComponentModel.Meta):
+        constraints = (
+            models.UniqueConstraint(
+                fields=('device', 'module', 'name'),
+                name='%(app_label)s_%(class)s_unique_device_module_name'
+            ),
+        )
         verbose_name = _('module bay')
         verbose_name_plural = _('module bays')
 
+    class MPTTMeta:
+        order_insertion_by = ('module',)
+
     def get_absolute_url(self):
         return reverse('dcim:modulebay', kwargs={'pk': self.pk})
+
+    def clean(self):
+        super().clean()
+
+        # Check for recursion
+        if module := self.module:
+            module_bays = [self.pk]
+            modules = []
+            while module:
+                if module.pk in modules or module.module_bay.pk in module_bays:
+                    raise ValidationError(_("A module bay cannot belong to a module installed within it."))
+                modules.append(module.pk)
+                module_bays.append(module.module_bay.pk)
+                module = module.module_bay.module if module.module_bay else None
+
+    def save(self, *args, **kwargs):
+        if self.module:
+            self.parent = self.module.module_bay
+        super().save(*args, **kwargs)
 
 
 class DeviceBay(ComponentModel, TrackingModelMixin):
@@ -1106,7 +1153,7 @@ class DeviceBay(ComponentModel, TrackingModelMixin):
     installed_device = models.OneToOneField(
         to='dcim.Device',
         on_delete=models.SET_NULL,
-        related_name=_('parent_bay'),
+        related_name='parent_bay',
         blank=True,
         null=True
     )
@@ -1124,13 +1171,13 @@ class DeviceBay(ComponentModel, TrackingModelMixin):
         super().clean()
 
         # Validate that the parent Device can have DeviceBays
-        if not self.device.device_type.is_parent_device:
+        if hasattr(self, 'device') and not self.device.device_type.is_parent_device:
             raise ValidationError(_("This type of device ({device_type}) does not support device bays.").format(
                 device_type=self.device.device_type
             ))
 
         # Cannot install a device into itself, obviously
-        if self.device == self.installed_device:
+        if self.installed_device and getattr(self, 'device', None) == self.installed_device:
             raise ValidationError(_("Cannot install a device into itself."))
 
         # Check that the installed device is not already installed elsewhere
@@ -1181,7 +1228,7 @@ class InventoryItem(MPTTModel, ComponentModel, TrackingModelMixin):
         db_index=True
     )
     component_type = models.ForeignKey(
-        to=ContentType,
+        to='contenttypes.ContentType',
         limit_choices_to=MODULAR_COMPONENT_MODELS,
         on_delete=models.PROTECT,
         related_name='+',
@@ -1241,6 +1288,9 @@ class InventoryItem(MPTTModel, ComponentModel, TrackingModelMixin):
 
     class Meta:
         ordering = ('device__id', 'parent__id', '_name')
+        indexes = (
+            models.Index(fields=('component_type', 'component_id')),
+        )
         constraints = (
             models.UniqueConstraint(
                 fields=('device', 'parent', 'name'),
@@ -1263,7 +1313,7 @@ class InventoryItem(MPTTModel, ComponentModel, TrackingModelMixin):
             })
 
         # Validation for moving InventoryItems
-        if self.pk:
+        if not self._state.adding:
             # Cannot move an InventoryItem to another device if it has a parent
             if self.parent and self.parent.device != self.device:
                 raise ValidationError({

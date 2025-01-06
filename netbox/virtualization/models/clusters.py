@@ -134,11 +134,10 @@ class Cluster(ContactsMixin, PrimaryModel):
         super().clean()
 
         # If the Cluster is assigned to a Site, verify that all host Devices belong to that Site.
-        if self.pk and self.site:
-            nonsite_devices = Device.objects.filter(cluster=self).exclude(site=self.site).count()
-            if nonsite_devices:
+        if not self._state.adding and self.site:
+            if nonsite_devices := Device.objects.filter(cluster=self).exclude(site=self.site).count():
                 raise ValidationError({
-                    'site': _("{} devices are assigned as hosts for this cluster but are not in site {}").format(
-                        nonsite_devices, self.site
-                    )
+                    'site': _(
+                        "{count} devices are assigned as hosts for this cluster but are not in site {site}"
+                    ).format(count=nonsite_devices, site=self.site)
                 })

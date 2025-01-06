@@ -31,7 +31,7 @@ A dictionary of particular features (e.g. custom fields) mapped to the NetBox mo
         'dcim': ['site', 'rack', 'devicetype', ...],
         ...
     },
-    'webhooks': {
+    'event_rules': {
         'extras': ['configcontext', 'tag', ...],
         'dcim': ['site', 'rack', 'devicetype', ...],
     },
@@ -41,13 +41,25 @@ A dictionary of particular features (e.g. custom fields) mapped to the NetBox mo
 
 Supported model features are listed in the [features matrix](./models.md#features-matrix).
 
+### `models`
+
+This key lists all models which have been registered in NetBox which are not designated for private use. (Setting `_netbox_private` to True on a model excludes it from this list.) As with individual features under `model_features`, models are organized by app label.
+
 ### `plugins`
 
 This store maintains all registered items for plugins, such as navigation menus, template extensions, etc.
 
+### `request_processors`
+
+A list of context managers to invoke when processing a request e.g. in middleware or when executing a background job. Request processors can be registered with the `@register_request_processor` decorator.
+
 ### `search`
 
 A dictionary mapping each model (identified by its app and label) to its search index class, if one has been registered for it.
+
+### `tables`
+
+A dictionary mapping table classes to lists of extra columns that have been registered by plugins using the `register_table_column()` utility function. Each column is defined as a tuple of name and column instance.
 
 ### `views`
 

@@ -3,9 +3,11 @@ from django.utils.translation import gettext_lazy as _
 
 from extras.choices import *
 from extras.models import *
+from netbox.events import get_event_type_choices
 from netbox.forms import NetBoxModelBulkEditForm
 from utilities.forms import BulkEditForm, add_blank_choice
-from utilities.forms.fields import ColorField, DynamicModelChoiceField
+from utilities.forms.fields import ColorField, CommentField, DynamicModelChoiceField
+from utilities.forms.rendering import FieldSet
 from utilities.forms.widgets import BulkEditNullBooleanSelect
 
 __all__ = (
@@ -14,8 +16,10 @@ __all__ = (
     'CustomFieldBulkEditForm',
     'CustomFieldChoiceSetBulkEditForm',
     'CustomLinkBulkEditForm',
+    'EventRuleBulkEditForm',
     'ExportTemplateBulkEditForm',
     'JournalEntryBulkEditForm',
+    'NotificationGroupBulkEditForm',
     'SavedFilterBulkEditForm',
     'TagBulkEditForm',
     'WebhookBulkEditForm',
@@ -40,6 +44,11 @@ class CustomFieldBulkEditForm(BulkEditForm):
         required=False,
         widget=BulkEditNullBooleanSelect()
     )
+    unique = forms.NullBooleanField(
+        label=_('Must be unique'),
+        required=False,
+        widget=BulkEditNullBooleanSelect()
+    )
     weight = forms.IntegerField(
         label=_('Weight'),
         required=False
@@ -48,18 +57,40 @@ class CustomFieldBulkEditForm(BulkEditForm):
         queryset=CustomFieldChoiceSet.objects.all(),
         required=False
     )
-    ui_visibility = forms.ChoiceField(
-        label=_("UI visibility"),
-        choices=add_blank_choice(CustomFieldVisibilityChoices),
-        required=False,
-        initial=''
+    ui_visible = forms.ChoiceField(
+        label=_("UI visible"),
+        choices=add_blank_choice(CustomFieldUIVisibleChoices),
+        required=False
+    )
+    ui_editable = forms.ChoiceField(
+        label=_("UI editable"),
+        choices=add_blank_choice(CustomFieldUIEditableChoices),
+        required=False
     )
     is_cloneable = forms.NullBooleanField(
         label=_('Is cloneable'),
         required=False,
         widget=BulkEditNullBooleanSelect()
     )
+    validation_minimum = forms.IntegerField(
+        label=_('Minimum value'),
+        required=False,
+    )
+    validation_maximum = forms.IntegerField(
+        label=_('Maximum value'),
+        required=False,
+    )
+    validation_regex = forms.CharField(
+        label=_('Validation regex'),
+        required=False
+    )
+    comments = CommentField()
 
+    fieldsets = (
+        FieldSet('group_name', 'description', 'weight', 'required', 'unique', 'choice_set', name=_('Attributes')),
+        FieldSet('ui_visible', 'ui_editable', 'is_cloneable', name=_('Behavior')),
+        FieldSet('validation_minimum', 'validation_maximum', 'validation_regex', name=_('Validation')),
+    )
     nullable_fields = ('group_name', 'description', 'choice_set')
 
 
@@ -173,35 +204,10 @@ class WebhookBulkEditForm(NetBoxModelBulkEditForm):
         queryset=Webhook.objects.all(),
         widget=forms.MultipleHiddenInput
     )
-    enabled = forms.NullBooleanField(
-        label=_('Enabled'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
-    )
-    type_create = forms.NullBooleanField(
-        label=_('On create'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
-    )
-    type_update = forms.NullBooleanField(
-        label=_('On update'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
-    )
-    type_delete = forms.NullBooleanField(
-        label=_('On delete'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
-    )
-    type_job_start = forms.NullBooleanField(
-        label=_('On job start'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
-    )
-    type_job_end = forms.NullBooleanField(
-        label=_('On job end'),
-        required=False,
-        widget=BulkEditNullBooleanSelect()
+    description = forms.CharField(
+        label=_('Description'),
+        max_length=200,
+        required=False
     )
     http_method = forms.ChoiceField(
         choices=add_blank_choice(WebhookHttpMethodChoices),
@@ -226,7 +232,33 @@ class WebhookBulkEditForm(NetBoxModelBulkEditForm):
         label=_('CA file path')
     )
 
-    nullable_fields = ('secret', 'conditions', 'ca_file_path')
+    nullable_fields = ('secret', 'ca_file_path')
+
+
+class EventRuleBulkEditForm(NetBoxModelBulkEditForm):
+    model = EventRule
+
+    pk = forms.ModelMultipleChoiceField(
+        queryset=EventRule.objects.all(),
+        widget=forms.MultipleHiddenInput
+    )
+    enabled = forms.NullBooleanField(
+        label=_('Enabled'),
+        required=False,
+        widget=BulkEditNullBooleanSelect()
+    )
+    event_types = forms.MultipleChoiceField(
+        choices=get_event_type_choices(),
+        required=False,
+        label=_('Event types')
+    )
+    description = forms.CharField(
+        label=_('Description'),
+        max_length=200,
+        required=False
+    )
+
+    nullable_fields = ('description', 'conditions')
 
 
 class TagBulkEditForm(BulkEditForm):
@@ -295,8 +327,18 @@ class JournalEntryBulkEditForm(BulkEditForm):
         choices=add_blank_choice(JournalEntryKindChoices),
         required=False
     )
-    comments = forms.CharField(
-        label=_('Comments'),
-        required=False,
-        widget=forms.Textarea()
+    comments = CommentField()
+
+
+class NotificationGroupBulkEditForm(BulkEditForm):
+    pk = forms.ModelMultipleChoiceField(
+        queryset=NotificationGroup.objects.all(),
+        widget=forms.MultipleHiddenInput
     )
+    description = forms.CharField(
+        label=_('Description'),
+        max_length=200,
+        required=False
+    )
+
+    nullable_fields = ('description',)

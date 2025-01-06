@@ -3,10 +3,11 @@ from rest_framework import status
 
 from dcim.choices import InterfaceModeChoices
 from dcim.models import Site
+from extras.models import ConfigTemplate
 from ipam.models import VLAN, VRF
-from utilities.testing import APITestCase, APIViewTestCases, create_test_device
+from utilities.testing import APITestCase, APIViewTestCases, create_test_device, create_test_virtualmachine
 from virtualization.choices import *
-from virtualization.models import Cluster, ClusterGroup, ClusterType, VirtualMachine, VMInterface
+from virtualization.models import *
 
 
 class AppTest(APITestCase):
@@ -21,7 +22,7 @@ class AppTest(APITestCase):
 
 class ClusterTypeTest(APIViewTestCases.APIViewTestCase):
     model = ClusterType
-    brief_fields = ['cluster_count', 'display', 'id', 'name', 'slug', 'url']
+    brief_fields = ['cluster_count', 'description', 'display', 'id', 'name', 'slug', 'url']
     create_data = [
         {
             'name': 'Cluster Type 4',
@@ -53,7 +54,7 @@ class ClusterTypeTest(APIViewTestCases.APIViewTestCase):
 
 class ClusterGroupTest(APIViewTestCases.APIViewTestCase):
     model = ClusterGroup
-    brief_fields = ['cluster_count', 'display', 'id', 'name', 'slug', 'url']
+    brief_fields = ['cluster_count', 'description', 'display', 'id', 'name', 'slug', 'url']
     create_data = [
         {
             'name': 'Cluster Group 4',
@@ -85,7 +86,7 @@ class ClusterGroupTest(APIViewTestCases.APIViewTestCase):
 
 class ClusterTest(APIViewTestCases.APIViewTestCase):
     model = Cluster
-    brief_fields = ['display', 'id', 'name', 'url', 'virtualmachine_count']
+    brief_fields = ['description', 'display', 'id', 'name', 'url', 'virtualmachine_count']
     bulk_update_data = {
         'status': 'offline',
         'comments': 'New comment',
@@ -137,7 +138,7 @@ class ClusterTest(APIViewTestCases.APIViewTestCase):
 
 class VirtualMachineTest(APIViewTestCases.APIViewTestCase):
     model = VirtualMachine
-    brief_fields = ['display', 'id', 'name', 'url']
+    brief_fields = ['description', 'display', 'id', 'name', 'url']
     bulk_update_data = {
         'status': 'staged',
     }
@@ -228,21 +229,35 @@ class VirtualMachineTest(APIViewTestCases.APIViewTestCase):
         response = self.client.post(url, data, format='json', **self.header)
         self.assertHttpStatus(response, status.HTTP_400_BAD_REQUEST)
 
+    def test_render_config(self):
+        configtemplate = ConfigTemplate.objects.create(
+            name='Config Template 1',
+            template_code='Config for virtual machine {{ virtualmachine.name }}'
+        )
+
+        vm = VirtualMachine.objects.first()
+        vm.config_template = configtemplate
+        vm.save()
+
+        self.add_permissions('virtualization.add_virtualmachine')
+        url = reverse('virtualization-api:virtualmachine-detail', kwargs={'pk': vm.pk}) + 'render-config/'
+        response = self.client.post(url, {}, format='json', **self.header)
+        self.assertHttpStatus(response, status.HTTP_200_OK)
+        self.assertEqual(response.data['content'], f'Config for virtual machine {vm.name}')
+
 
 class VMInterfaceTest(APIViewTestCases.APIViewTestCase):
     model = VMInterface
-    brief_fields = ['display', 'id', 'name', 'url', 'virtual_machine']
+    brief_fields = ['description', 'display', 'id', 'name', 'url', 'virtual_machine']
     bulk_update_data = {
         'description': 'New description',
     }
     graphql_base_name = 'vm_interface'
+    user_permissions = ('virtualization.view_virtualmachine', )
 
     @classmethod
     def setUpTestData(cls):
-
-        clustertype = ClusterType.objects.create(name='Test Cluster Type 1', slug='test-cluster-type-1')
-        cluster = Cluster.objects.create(name='Test Cluster 1', type=clustertype)
-        virtualmachine = VirtualMachine.objects.create(cluster=cluster, name='Test VM 1')
+        virtualmachine = create_test_virtualmachine('Virtual Machine 1')
 
         interfaces = (
             VMInterface(virtual_machine=virtualmachine, name='Interface 1'),
@@ -291,5 +306,70 @@ class VMInterfaceTest(APIViewTestCases.APIViewTestCase):
                 'tagged_vlans': [vlans[0].pk, vlans[1].pk],
                 'untagged_vlan': vlans[2].pk,
                 'vrf': vrfs[2].pk,
+            },
+        ]
+
+    def test_bulk_delete_child_interfaces(self):
+        interface1 = VMInterface.objects.get(name='Interface 1')
+        virtual_machine = interface1.virtual_machine
+        self.add_permissions('virtualization.delete_vminterface')
+
+        # Create a child interface
+        child = VMInterface.objects.create(
+            virtual_machine=virtual_machine,
+            name='Interface 1A',
+            parent=interface1
+        )
+        self.assertEqual(virtual_machine.interfaces.count(), 4)
+
+        # Attempt to delete only the parent interface
+        url = self._get_detail_url(interface1)
+        self.client.delete(url, **self.header)
+        self.assertEqual(virtual_machine.interfaces.count(), 4)  # Parent was not deleted
+
+        # Attempt to bulk delete parent & child together
+        data = [
+            {"id": interface1.pk},
+            {"id": child.pk},
+        ]
+        self.client.delete(self._get_list_url(), data, format='json', **self.header)
+        self.assertEqual(virtual_machine.interfaces.count(), 2)  # Child & parent were both deleted
+
+
+class VirtualDiskTest(APIViewTestCases.APIViewTestCase):
+    model = VirtualDisk
+    brief_fields = ['description', 'display', 'id', 'name', 'size', 'url', 'virtual_machine']
+    bulk_update_data = {
+        'size': 888,
+    }
+    graphql_base_name = 'virtual_disk'
+    user_permissions = ('virtualization.view_virtualmachine', )
+
+    @classmethod
+    def setUpTestData(cls):
+        virtualmachine = create_test_virtualmachine('Virtual Machine 1')
+
+        disks = (
+            VirtualDisk(virtual_machine=virtualmachine, name='Disk 1', size=10),
+            VirtualDisk(virtual_machine=virtualmachine, name='Disk 2', size=20),
+            VirtualDisk(virtual_machine=virtualmachine, name='Disk 3', size=30),
+        )
+        VirtualDisk.objects.bulk_create(disks)
+
+        cls.create_data = [
+            {
+                'virtual_machine': virtualmachine.pk,
+                'name': 'Disk 4',
+                'size': 10,
+            },
+            {
+                'virtual_machine': virtualmachine.pk,
+                'name': 'Disk 5',
+                'size': 20,
+            },
+            {
+                'virtual_machine': virtualmachine.pk,
+                'name': 'Disk 6',
+                'size': 30,
             },
         ]

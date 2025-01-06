@@ -10,6 +10,7 @@ from netbox.forms import NetBoxModelBulkEditForm
 from tenancy.models import Tenant
 from utilities.forms import BulkRenameForm, add_blank_choice
 from utilities.forms.fields import CommentField, DynamicModelChoiceField, DynamicModelMultipleChoiceField
+from utilities.forms.rendering import FieldSet
 from utilities.forms.widgets import BulkEditNullBooleanSelect
 from virtualization.choices import *
 from virtualization.models import *
@@ -18,6 +19,8 @@ __all__ = (
     'ClusterBulkEditForm',
     'ClusterGroupBulkEditForm',
     'ClusterTypeBulkEditForm',
+    'VirtualDiskBulkEditForm',
+    'VirtualDiskBulkRenameForm',
     'VirtualMachineBulkEditForm',
     'VMInterfaceBulkEditForm',
     'VMInterfaceBulkRenameForm',
@@ -33,7 +36,7 @@ class ClusterTypeBulkEditForm(NetBoxModelBulkEditForm):
 
     model = ClusterType
     fieldsets = (
-        (None, ('description',)),
+        FieldSet('description'),
     )
     nullable_fields = ('description',)
 
@@ -47,7 +50,7 @@ class ClusterGroupBulkEditForm(NetBoxModelBulkEditForm):
 
     model = ClusterGroup
     fieldsets = (
-        (None, ('description',)),
+        FieldSet('description'),
     )
     nullable_fields = ('description',)
 
@@ -94,7 +97,7 @@ class ClusterBulkEditForm(NetBoxModelBulkEditForm):
         }
     )
     description = forms.CharField(
-        label=_('Site'),
+        label=_('Description'),
         max_length=200,
         required=False
     )
@@ -102,8 +105,8 @@ class ClusterBulkEditForm(NetBoxModelBulkEditForm):
 
     model = Cluster
     fieldsets = (
-        (None, ('type', 'group', 'status', 'tenant', 'description')),
-        (_('Site'), ('region', 'site_group', 'site')),
+        FieldSet('type', 'group', 'status', 'tenant', 'description'),
+        FieldSet('region', 'site_group', 'site', name=_('Site')),
     )
     nullable_fields = (
         'group', 'site', 'tenant', 'description', 'comments',
@@ -168,7 +171,7 @@ class VirtualMachineBulkEditForm(NetBoxModelBulkEditForm):
     )
     disk = forms.IntegerField(
         required=False,
-        label=_('Disk (GB)')
+        label=_('Disk (MB)')
     )
     description = forms.CharField(
         label=_('Description'),
@@ -183,9 +186,9 @@ class VirtualMachineBulkEditForm(NetBoxModelBulkEditForm):
 
     model = VirtualMachine
     fieldsets = (
-        (None, ('site', 'cluster', 'device', 'status', 'role', 'tenant', 'platform', 'description')),
-        (_('Resources'), ('vcpus', 'memory', 'disk')),
-        ('Configuration', ('config_template',)),
+        FieldSet('site', 'cluster', 'device', 'status', 'role', 'tenant', 'platform', 'description'),
+        FieldSet('vcpus', 'memory', 'disk', name=_('Resources')),
+        FieldSet('config_template', name=_('Configuration')),
     )
     nullable_fields = (
         'site', 'cluster', 'device', 'role', 'tenant', 'platform', 'vcpus', 'memory', 'disk', 'description', 'comments',
@@ -260,9 +263,9 @@ class VMInterfaceBulkEditForm(NetBoxModelBulkEditForm):
 
     model = VMInterface
     fieldsets = (
-        (None, ('mtu', 'enabled', 'vrf', 'description')),
-        (_('Related Interfaces'), ('parent', 'bridge')),
-        (_('802.1Q Switching'), ('mode', 'vlan_group', 'untagged_vlan', 'tagged_vlans')),
+        FieldSet('mtu', 'enabled', 'vrf', 'description'),
+        FieldSet('parent', 'bridge', name=_('Related Interfaces')),
+        FieldSet('mode', 'vlan_group', 'untagged_vlan', 'tagged_vlans', name=_('802.1Q Switching')),
     )
     nullable_fields = (
         'parent', 'bridge', 'mtu', 'vrf', 'description',
@@ -294,9 +297,10 @@ class VMInterfaceBulkEditForm(NetBoxModelBulkEditForm):
                 # Check interface sites.  First interface should set site, further interfaces will either continue the
                 # loop or reset back to no site and break the loop.
                 for interface in interfaces:
+                    vm_site = interface.virtual_machine.site or interface.virtual_machine.cluster.site
                     if site is None:
-                        site = interface.virtual_machine.cluster.site
-                    elif interface.virtual_machine.cluster.site is not site:
+                        site = vm_site
+                    elif vm_site is not site:
                         site = None
                         break
 
@@ -313,5 +317,37 @@ class VMInterfaceBulkEditForm(NetBoxModelBulkEditForm):
 class VMInterfaceBulkRenameForm(BulkRenameForm):
     pk = forms.ModelMultipleChoiceField(
         queryset=VMInterface.objects.all(),
+        widget=forms.MultipleHiddenInput()
+    )
+
+
+class VirtualDiskBulkEditForm(NetBoxModelBulkEditForm):
+    virtual_machine = forms.ModelChoiceField(
+        label=_('Virtual machine'),
+        queryset=VirtualMachine.objects.all(),
+        required=False,
+        disabled=True,
+        widget=forms.HiddenInput()
+    )
+    size = forms.IntegerField(
+        required=False,
+        label=_('Size (MB)')
+    )
+    description = forms.CharField(
+        label=_('Description'),
+        max_length=100,
+        required=False
+    )
+
+    model = VirtualDisk
+    fieldsets = (
+        FieldSet('size', 'description'),
+    )
+    nullable_fields = ('description',)
+
+
+class VirtualDiskBulkRenameForm(BulkRenameForm):
+    pk = forms.ModelMultipleChoiceField(
+        queryset=VirtualDisk.objects.all(),
         widget=forms.MultipleHiddenInput()
     )

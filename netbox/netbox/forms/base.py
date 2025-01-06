@@ -1,14 +1,17 @@
+import json
+
 from django import forms
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
-from extras.choices import CustomFieldFilterLogicChoices, CustomFieldTypeChoices, CustomFieldVisibilityChoices
-from extras.forms.mixins import CustomFieldsMixin, SavedFiltersMixin, TagsMixin
+from core.models import ObjectType
+from extras.choices import *
 from extras.models import CustomField, Tag
 from utilities.forms import CSVModelForm
 from utilities.forms.fields import CSVModelMultipleChoiceField, DynamicModelMultipleChoiceField
-from utilities.forms.mixins import BootstrapMixin, CheckLastUpdatedMixin
+from utilities.forms.mixins import CheckLastUpdatedMixin
+from .mixins import CustomFieldsMixin, SavedFiltersMixin, TagsMixin
 
 __all__ = (
     'NetBoxModelForm',
@@ -18,12 +21,12 @@ __all__ = (
 )
 
 
-class NetBoxModelForm(BootstrapMixin, CheckLastUpdatedMixin, CustomFieldsMixin, TagsMixin, forms.ModelForm):
+class NetBoxModelForm(CheckLastUpdatedMixin, CustomFieldsMixin, TagsMixin, forms.ModelForm):
     """
     Base form for creating & editing NetBox models. Extends Django's ModelForm to add support for custom fields.
 
     Attributes:
-        fieldsets: An iterable of two-tuples which define a heading and field set to display per section of
+        fieldsets: An iterable of FieldSets which define a name and set of fields to display per section of
             the rendered form (optional). If not defined, the all fields will be rendered as a single section.
     """
     fieldsets = ()
@@ -34,7 +37,11 @@ class NetBoxModelForm(BootstrapMixin, CheckLastUpdatedMixin, CustomFieldsMixin, 
     def _get_form_field(self, customfield):
         if self.instance.pk:
             form_field = customfield.to_form_field(set_initial=False)
-            form_field.initial = self.instance.custom_field_data.get(customfield.name, None)
+            initial = self.instance.custom_field_data.get(customfield.name)
+            if customfield.type == CustomFieldTypeChoices.TYPE_JSON:
+                form_field.initial = json.dumps(initial)
+            else:
+                form_field.initial = initial
             return form_field
 
         return customfield.to_form_field()
@@ -53,41 +60,47 @@ class NetBoxModelForm(BootstrapMixin, CheckLastUpdatedMixin, CustomFieldsMixin, 
             if value in self.fields[cf_name].empty_values:
                 self.instance.custom_field_data[key] = None
             else:
+                if customfield.type == CustomFieldTypeChoices.TYPE_JSON and type(value) is str:
+                    value = json.loads(value)
                 self.instance.custom_field_data[key] = customfield.serialize(value)
 
         return super().clean()
+
+    def _post_clean(self):
+        """
+        Override BaseModelForm's _post_clean() to store many-to-many field values on the model instance.
+        """
+        self.instance._m2m_values = {}
+        for field in self.instance._meta.local_many_to_many:
+            if field.name in self.cleaned_data:
+                self.instance._m2m_values[field.name] = list(self.cleaned_data[field.name])
+
+        return super()._post_clean()
 
 
 class NetBoxModelImportForm(CSVModelForm, NetBoxModelForm):
     """
     Base form for creating a NetBox objects from CSV data. Used for bulk importing.
     """
-    id = forms.IntegerField(
-        label=_('Id'),
-        required=False,
-        help_text='Numeric ID of an existing object to update (if not creating a new object)'
-    )
     tags = CSVModelMultipleChoiceField(
         label=_('Tags'),
         queryset=Tag.objects.all(),
         required=False,
         to_field_name='slug',
-        help_text='Tag slugs separated by commas, encased with double quotes (e.g. "tag1,tag2,tag3")'
+        help_text=_('Tag slugs separated by commas, encased with double quotes (e.g. "tag1,tag2,tag3")')
     )
 
     def _get_custom_fields(self, content_type):
-        return CustomField.objects.filter(content_types=content_type).filter(
-            ui_visibility__in=[
-                CustomFieldVisibilityChoices.VISIBILITY_READ_WRITE,
-                CustomFieldVisibilityChoices.VISIBILITY_HIDDEN_IFUNSET,
-            ]
+        return CustomField.objects.filter(
+            object_types=content_type,
+            ui_editable=CustomFieldUIEditableChoices.YES
         )
 
     def _get_form_field(self, customfield):
         return customfield.to_form_field(for_csv_import=True)
 
 
-class NetBoxModelBulkEditForm(BootstrapMixin, CustomFieldsMixin, forms.Form):
+class NetBoxModelBulkEditForm(CustomFieldsMixin, forms.Form):
     """
     Base form for modifying multiple NetBox objects (of the same type) in bulk via the UI. Adds support for custom
     fields and adding/removing tags.
@@ -120,9 +133,9 @@ class NetBoxModelBulkEditForm(BootstrapMixin, CustomFieldsMixin, forms.Form):
         self.fields['pk'].queryset = self.model.objects.all()
 
         # Restrict tag fields by model
-        ct = ContentType.objects.get_for_model(self.model)
-        self.fields['add_tags'].widget.add_query_param('for_object_type_id', ct.pk)
-        self.fields['remove_tags'].widget.add_query_param('for_object_type_id', ct.pk)
+        object_type = ObjectType.objects.get_for_model(self.model)
+        self.fields['add_tags'].widget.add_query_param('for_object_type_id', object_type.pk)
+        self.fields['remove_tags'].widget.add_query_param('for_object_type_id', object_type.pk)
 
         self._extend_nullable_fields()
 
@@ -131,12 +144,13 @@ class NetBoxModelBulkEditForm(BootstrapMixin, CustomFieldsMixin, forms.Form):
 
     def _extend_nullable_fields(self):
         nullable_custom_fields = [
-            name for name, customfield in self.custom_fields.items() if (not customfield.required and customfield.ui_visibility == CustomFieldVisibilityChoices.VISIBILITY_READ_WRITE)
+            name for name, customfield in self.custom_fields.items()
+            if (not customfield.required and customfield.ui_editable == CustomFieldUIEditableChoices.YES)
         ]
         self.nullable_fields = (*self.nullable_fields, *nullable_custom_fields)
 
 
-class NetBoxModelFilterSetForm(BootstrapMixin, CustomFieldsMixin, SavedFiltersMixin, forms.Form):
+class NetBoxModelFilterSetForm(CustomFieldsMixin, SavedFiltersMixin, forms.Form):
     """
     Base form for FilerSet forms. These are used to filter object lists in the NetBox UI. Note that the
     corresponding FilterSet *must* provide a `q` filter.
@@ -145,19 +159,23 @@ class NetBoxModelFilterSetForm(BootstrapMixin, CustomFieldsMixin, SavedFiltersMi
         model: The model class associated with the form
         fieldsets: An iterable of two-tuples which define a heading and field set to display per section of
             the rendered form (optional). If not defined, the all fields will be rendered as a single section.
+        selector_fields: An iterable of names of fields to display by default when rendering the form as
+            a selector widget
     """
     q = forms.CharField(
         required=False,
         label=_('Search')
     )
 
+    selector_fields = ('filter_id', 'q')
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # Limit saved filters to those applicable to the form's model
-        content_type = ContentType.objects.get_for_model(self.model)
+        object_type = ObjectType.objects.get_for_model(self.model)
         self.fields['filter_id'].widget.add_query_params({
-            'content_type_id': content_type.pk,
+            'object_type_id': object_type.pk,
         })
 
     def _get_custom_fields(self, content_type):

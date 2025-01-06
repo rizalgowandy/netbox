@@ -1,11 +1,11 @@
 from django import forms
 from django.utils.translation import gettext_lazy as _
 
-from core.choices import DataSourceTypeChoices
 from core.models import *
 from netbox.forms import NetBoxModelBulkEditForm
-from utilities.forms import add_blank_choice
+from netbox.utils import get_data_backend_choices
 from utilities.forms.fields import CommentField
+from utilities.forms.rendering import FieldSet
 from utilities.forms.widgets import BulkEditNullBooleanSelect
 
 __all__ = (
@@ -16,14 +16,13 @@ __all__ = (
 class DataSourceBulkEditForm(NetBoxModelBulkEditForm):
     type = forms.ChoiceField(
         label=_('Type'),
-        choices=add_blank_choice(DataSourceTypeChoices),
-        required=False,
-        initial=''
+        choices=get_data_backend_choices,
+        required=False
     )
     enabled = forms.NullBooleanField(
         required=False,
         widget=BulkEditNullBooleanSelect(),
-        label=_('Enforce unique space')
+        label=_('Enabled')
     )
     description = forms.CharField(
         label=_('Description'),
@@ -43,7 +42,7 @@ class DataSourceBulkEditForm(NetBoxModelBulkEditForm):
 
     model = DataSource
     fieldsets = (
-        (None, ('type', 'enabled', 'description', 'comments', 'parameters', 'ignore_rules')),
+        FieldSet('type', 'enabled', 'description', 'comments', 'parameters', 'ignore_rules'),
     )
     nullable_fields = (
         'description', 'description', 'parameters', 'comments', 'parameters', 'ignore_rules',
